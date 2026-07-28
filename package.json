@@ -17,14 +17,39 @@
     "test:watch": "jest --watch",
     "test:cov": "jest --coverage",
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
-    "test:e2e": "jest --config ./test/jest-e2e.json"
+    "test:e2e": "jest --config ./test/jest-e2e.json",
+    "prisma:generate": "prisma generate",
+    "prisma:migrate": "prisma migrate dev",
+    "prisma:seed": "prisma db seed",
+    "prisma:studio": "prisma studio"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1097.0",
+    "@aws-sdk/s3-request-presigner": "^3.1097.0",
     "@nestjs/common": "^11.1.28",
+    "@nestjs/config": "^4.0.4",
     "@nestjs/core": "^11.1.28",
+    "@nestjs/jwt": "^11.0.2",
+    "@nestjs/passport": "^11.0.5",
     "@nestjs/platform-express": "^11.1.28",
+    "@nestjs/swagger": "^11.4.6",
+    "@nestjs/throttler": "^6.5.0",
+    "@prisma/adapter-pg": "^7.9.1",
+    "@prisma/client": "^7.9.1",
+    "bcrypt": "^6.0.0",
+    "class-transformer": "^0.5.1",
+    "class-validator": "^0.15.1",
+    "dotenv": "^17.4.2",
+    "helmet": "^8.3.0",
+    "ioredis": "^5.11.1",
+    "multer": "^2.2.0",
+    "passport": "^0.7.0",
+    "passport-jwt": "^4.0.1",
+    "pg": "^8.22.0",
     "reflect-metadata": "^0.2.2",
-    "rxjs": "^7.8.2"
+    "rxjs": "^7.8.2",
+    "sharp": "^0.35.3",
+    "stripe": "^22.3.2"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3.3.6",
@@ -32,9 +57,14 @@
     "@nestjs/cli": "^11.0.24",
     "@nestjs/schematics": "^11.1.0",
     "@nestjs/testing": "^11.1.28",
+    "@types/bcrypt": "^6.0.0",
     "@types/express": "^5.0.6",
     "@types/jest": "^30.0.0",
+    "@types/multer": "^2.2.0",
     "@types/node": "^26.1.2",
+    "@types/passport-jwt": "^4.0.1",
+    "@types/pg": "^8.20.0",
+    "@types/sharp": "^0.31.1",
     "@types/supertest": "^7.2.1",
     "eslint": "^10.8.0",
     "eslint-config-prettier": "^10.1.8",
@@ -42,13 +72,15 @@
     "globals": "^17.8.0",
     "jest": "^30.4.2",
     "prettier": "^3.9.6",
+    "prisma": "^7.9.1",
     "source-map-support": "^0.5.21",
     "supertest": "^7.2.2",
     "ts-jest": "^29.4.12",
     "ts-loader": "^9.6.2",
     "ts-node": "^10.9.2",
     "tsconfig-paths": "^4.2.0",
-    "typescript": "^7.0.2",
+    "tsx": "^4.23.1",
+    "typescript": "~5.9.3",
     "typescript-eslint": "^8.65.0"
   },
   "jest": {
@@ -62,10 +94,28 @@
     "transform": {
       "^.+\\.(t|j)s$": "ts-jest"
     },
+    "moduleNameMapper": {
+      "^(\\.{1,2}/.*)\\.js$": "$1"
+    },
     "collectCoverageFrom": [
-      "**/*.(t|j)s"
+      "**/*.(t|j)s",
+      "!**/generated/**",
+      "!main.ts",
+      "!**/*.module.ts",
+      "!**/test/**",
+      "!**/dto/**",
+      "!prisma/prisma.service.ts",
+      "!redis/redis.service.ts"
     ],
     "coverageDirectory": "../coverage",
-    "testEnvironment": "node"
+    "testEnvironment": "node",
+    "coverageThreshold": {
+      "global": {
+        "statements": 80,
+        "branches": 80,
+        "functions": 80,
+        "lines": 80
+      }
+    }
   }
 }

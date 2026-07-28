@@ -1,0 +1,196 @@
+// Himba — schéma Prisma MVP
+generator client {
+  provider     = "prisma-client"
+  output       = "../src/generated/prisma"
+  moduleFormat = "cjs"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum UserRole {
+  LISTENER
+  ARTIST
+  ADMIN
+}
+
+enum UserStatus {
+  ACTIVE
+  RESTRICTED
+  BANNED
+}
+
+model User {
+  id           String     @id @default(cuid())
+  username     String     @unique
+  email        String     @unique
+  passwordHash String
+  role         UserRole   @default(LISTENER)
+  bio          String?
+  avatarUrl    String?
+  status       UserStatus @default(ACTIVE)
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  artist       Artist?
+  playlists    Playlist[]
+  follows      Follow[]
+  favorites    Favorite[]
+  ratings      Rating[]
+  playEvents   PlayEvent[]
+  purchases    Purchase[]
+
+  @@index([email])
+  @@index([username])
+  @@map("users")
+}
+
+model Artist {
+  id          String   @id @default(cuid())
+  userId      String   @unique
+  displayName String
+  bio         String?
+  coverUrl    String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tracks   Track[]
+  follows  Follow[]
+  ratings  Rating[]
+
+  @@map("artists")
+}
+
+model Track {
+  id             String   @id @default(cuid())
+  artistId       String
+  title          String
+  genre          String?
+  priceCents     Int?
+  audioObjectKey String
+  coverUrl       String?
+  durationMs     Int?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  artist          Artist          @relation(fields: [artistId], references: [id], onDelete: Cascade)
+  playlistTracks  PlaylistTrack[]
+  favorites       Favorite[]
+  ratings         Rating[]
+  playEvents      PlayEvent[]
+  purchases       Purchase[]
+
+  @@index([artistId])
+  @@index([createdAt])
+  @@map("tracks")
+}
+
+model Playlist {
+  id        String   @id @default(cuid())
+  userId    String
+  name      String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user   User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tracks PlaylistTrack[]
+
+  @@index([userId])
+  @@map("playlists")
+}
+
+model PlaylistTrack {
+  id         String @id @default(cuid())
+  playlistId String
+  trackId    String
+  position   Int
+
+  playlist Playlist @relation(fields: [playlistId], references: [id], onDelete: Cascade)
+  track    Track    @relation(fields: [trackId], references: [id], onDelete: Cascade)
+
+  @@unique([playlistId, trackId])
+  @@index([playlistId, position])
+  @@map("playlist_tracks")
+}
+
+model Follow {
+  id         String   @id @default(cuid())
+  followerId String
+  artistId   String
+  createdAt  DateTime @default(now())
+
+  follower User   @relation(fields: [followerId], references: [id], onDelete: Cascade)
+  artist   Artist @relation(fields: [artistId], references: [id], onDelete: Cascade)
+
+  @@unique([followerId, artistId])
+  @@index([artistId])
+  @@map("follows")
+}
+
+model Favorite {
+  id        String   @id @default(cuid())
+  userId    String
+  trackId   String
+  createdAt DateTime @default(now())
+
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  track Track @relation(fields: [trackId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, trackId])
+  @@map("favorites")
+}
+
+model Rating {
+  id        String   @id @default(cuid())
+  userId    String
+  trackId   String?
+  artistId  String?
+  value     Int
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user   User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  track  Track?  @relation(fields: [trackId], references: [id], onDelete: Cascade)
+  artist Artist? @relation(fields: [artistId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, trackId])
+  @@unique([userId, artistId])
+  @@index([trackId])
+  @@index([artistId])
+  @@map("ratings")
+}
+
+model PlayEvent {
+  id         String   @id @default(cuid())
+  userId     String
+  trackId    String
+  listenedAt DateTime @default(now())
+  progressMs Int?
+
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  track Track @relation(fields: [trackId], references: [id], onDelete: Cascade)
+
+  @@index([userId, listenedAt])
+  @@index([trackId])
+  @@map("play_events")
+}
+
+model Purchase {
+  id                        String   @id @default(cuid())
+  userId                    String
+  trackId                   String
+  amountCents               Int
+  platformCommissionPercent Int
+  artistAmountCents         Int
+  stripePaymentId           String?  @unique
+  createdAt                 DateTime @default(now())
+
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  track Track @relation(fields: [trackId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, trackId])
+  @@index([trackId])
+  @@map("purchases")
+}
