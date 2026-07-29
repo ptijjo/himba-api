@@ -7,7 +7,7 @@ if [ -n "${DATABASE_URL:-}" ]; then
   npx prisma migrate deploy
 
   echo "Prisma seed (admin)..."
-  npm run prisma:seed
+  npx tsx prisma/seed.ts
 else
   echo "DATABASE_URL absent — skip migrate/seed"
 fi

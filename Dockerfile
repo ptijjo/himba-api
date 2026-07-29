@@ -2,6 +2,9 @@
 
 FROM node:22-bookworm-slim AS build
 
+# Coolify peut injecter NODE_ENV=production au build → forcer devDeps (@nestjs/cli, etc.)
+ENV NODE_ENV=development
+
 WORKDIR /app
 
 # Prisma + modules natifs (sharp)
@@ -10,7 +13,7 @@ RUN apt-get update \
   && rm -rf /var/lib/apt/lists/*
 
 COPY package.json package-lock.json ./
-RUN npm ci
+RUN npm ci --include=dev
 
 COPY prisma ./prisma
 COPY prisma.config.ts ./
