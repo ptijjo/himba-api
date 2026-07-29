@@ -6,6 +6,7 @@ import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import {
   AUDIO_CONTENT_TYPE_AAC,
   AUDIO_CONTENT_TYPE_M4A,
+  AUDIO_CONTENT_TYPE_MP3,
   S3_CLIENT,
 } from './storage.constants';
 import { StorageService } from './storage.service';
@@ -33,11 +34,28 @@ function fakeM4aBuffer(): Buffer {
   return buf;
 }
 
-/** Flux ADTS (AAC raw) — sync 0xFFF. */
+/** Flux ADTS (AAC raw) — sync 0xFFF, layer bits 00. */
 function fakeAdtsBuffer(): Buffer {
   const buf = Buffer.alloc(64, 0);
   buf[0] = 0xff;
   buf[1] = 0xf1;
+  return buf;
+}
+
+/** Frame MPEG Layer III (MP3) — sync + layer ≠ 00. */
+function fakeMp3FrameBuffer(): Buffer {
+  const buf = Buffer.alloc(64, 0);
+  buf[0] = 0xff;
+  buf[1] = 0xfb;
+  return buf;
+}
+
+/** MP3 avec tag ID3v2. */
+function fakeMp3WithId3Buffer(): Buffer {
+  const buf = Buffer.alloc(64, 0);
+  buf.write('ID3', 0);
+  buf[3] = 3;
+  buf[4] = 0;
   return buf;
 }
 
@@ -134,6 +152,34 @@ describe('StorageService', () => {
     expect(put.input.ContentType).toBe(AUDIO_CONTENT_TYPE_AAC);
   });
 
+  it('uploadAudio sniffe MP3 (frame) et force ContentType audio/mpeg', async () => {
+    const file = {
+      buffer: fakeMp3FrameBuffer(),
+      size: 1000,
+      mimetype: 'audio/mpeg',
+      originalname: 'track.mp3',
+    } as Express.Multer.File;
+
+    const result = await service.uploadAudio(file, 'audio');
+    expect(result.objectKey).toMatch(/^audio\/.+\.mp3$/);
+    const put = s3Send.mock.calls[0][0] as PutObjectCommand;
+    expect(put.input.ContentType).toBe(AUDIO_CONTENT_TYPE_MP3);
+  });
+
+  it('uploadAudio sniffe ID3 → .mp3', async () => {
+    const file = {
+      buffer: fakeMp3WithId3Buffer(),
+      size: 1000,
+      mimetype: 'application/octet-stream',
+      originalname: 'song.mp3',
+    } as Express.Multer.File;
+
+    const result = await service.uploadAudio(file, 'audio');
+    expect(result.objectKey).toMatch(/\.mp3$/);
+    const put = s3Send.mock.calls[0][0] as PutObjectCommand;
+    expect(put.input.ContentType).toBe(AUDIO_CONTENT_TYPE_MP3);
+  });
+
   it('rejette buffer sans magic audio', async () => {
     const file = {
       buffer: Buffer.from('not-audio-at-all'),
@@ -147,12 +193,15 @@ describe('StorageService', () => {
     );
   });
 
-  it('rejette audio non AAC', async () => {
+  it('rejette WAV / format non supporté', async () => {
+    const wav = Buffer.alloc(16, 0);
+    wav.write('RIFF', 0);
+    wav.write('WAVE', 8);
     const file = {
-      buffer: Buffer.from('mp3'),
-      size: 1000,
-      mimetype: 'audio/mpeg',
-      originalname: 'track.mp3',
+      buffer: wav,
+      size: 16,
+      mimetype: 'audio/wav',
+      originalname: 'track.wav',
     } as Express.Multer.File;
 
     await expect(service.uploadAudio(file, 'audio')).rejects.toBeInstanceOf(
@@ -172,6 +221,11 @@ describe('StorageService', () => {
     const cmdAac = jest.mocked(getSignedUrl).mock
       .calls[1][1] as GetObjectCommand;
     expect(cmdAac.input.ResponseContentType).toBe(AUDIO_CONTENT_TYPE_AAC);
+
+    await service.getSignedUrl('audio/x.mp3');
+    const cmdMp3 = jest.mocked(getSignedUrl).mock
+      .calls[2][1] as GetObjectCommand;
+    expect(cmdMp3.input.ResponseContentType).toBe(AUDIO_CONTENT_TYPE_MP3);
   });
 
   it('rejette image / audio vides ou trop lourds', async () => {

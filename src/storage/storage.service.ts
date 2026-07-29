@@ -13,6 +13,7 @@ import {
   ALLOWED_IMAGE_MIME,
   AUDIO_CONTENT_TYPE_AAC,
   AUDIO_CONTENT_TYPE_M4A,
+  AUDIO_CONTENT_TYPE_MP3,
   MAX_AUDIO_BYTES,
   MAX_IMAGE_BYTES,
   S3_CLIENT,
@@ -20,7 +21,7 @@ import {
 
 export type UploadImageKind = 'cover' | 'avatar';
 
-type AudioKind = 'm4a' | 'aac';
+type AudioKind = 'm4a' | 'aac' | 'mp3';
 
 @Injectable()
 export class StorageService {
@@ -76,8 +77,8 @@ export class StorageService {
   }
 
   /**
-   * Upload audio — sniffe le conteneur (M4A/MP4 vs ADTS), normalise Content-Type.
-   * Recommandé : M4A + AAC-LC (seek / durée fiables sur mobile).
+   * Upload audio — sniffe le conteneur (M4A / ADTS / MP3), normalise Content-Type.
+   * Recommandé : M4A + AAC-LC ; MP3 accepté tel quel (pas de transcodage).
    */
   async uploadAudio(
     file: Express.Multer.File,
@@ -87,21 +88,17 @@ export class StorageService {
     const kind = this.detectAudioKind(file.buffer);
     if (!kind) {
       throw new BadRequestException(
-        'Fichier audio invalide. Exportez en M4A (AAC-LC), pas MP3 / WAV / ADTS corrompu.',
+        'Fichier audio invalide. Exportez en M4A (AAC-LC) ou MP3.',
       );
     }
 
-    const ext = kind;
-    const contentType =
-      kind === 'm4a' ? AUDIO_CONTENT_TYPE_M4A : AUDIO_CONTENT_TYPE_AAC;
-    const objectKey = `${folder}/${randomUUID()}.${ext}`;
-
+    const objectKey = `${folder}/${randomUUID()}.${kind}`;
     await this.s3.send(
       new PutObjectCommand({
         Bucket: this.bucket,
         Key: objectKey,
         Body: file.buffer,
-        ContentType: contentType,
+        ContentType: this.contentTypeForKind(kind),
         // Aide les lecteurs / CDN à servir du range seek
         CacheControl: 'public, max-age=31536000, immutable',
       }),
@@ -161,10 +158,11 @@ export class StorageService {
     const extOk =
       name.endsWith('.aac') ||
       name.endsWith('.m4a') ||
-      name.endsWith('.mp4');
+      name.endsWith('.mp4') ||
+      name.endsWith('.mp3');
     if (!mimeOk && !extOk) {
       throw new BadRequestException(
-        'Exportez le titre en M4A / AAC-LC (transcodage serveur non disponible)',
+        'Exportez le titre en M4A / AAC-LC ou MP3 (transcodage serveur non disponible)',
       );
     }
   }
@@ -172,7 +170,8 @@ export class StorageService {
   /**
    * Détection conteneur — source de vérité (pas le MIME client).
    * - M4A/MP4 : box `ftyp` à l’offset 4
-   * - AAC ADTS : sync 0xFFF (12 bits)
+   * - MP3 : tag ID3, ou frame MPEG Layer I/II/III
+   * - AAC ADTS : sync 0xFFF + layer bits 00 (≠ MP3)
    */
   detectAudioKind(buffer: Buffer): AudioKind | null {
     if (buffer.length < 8) {
@@ -187,11 +186,38 @@ export class StorageService {
     ) {
       return 'm4a';
     }
-    // ADTS — 12 bits sync 0xFFF
-    if (buffer[0] === 0xff && (buffer[1] & 0xf0) === 0xf0) {
-      return 'aac';
+    // ID3v2 — quasi toujours un MP3
+    if (
+      buffer[0] === 0x49 &&
+      buffer[1] === 0x44 &&
+      buffer[2] === 0x33
+    ) {
+      return 'mp3';
+    }
+    // Frame MPEG / ADTS — sync 0xFFE… ; layer bits 00 = ADTS AAC, sinon MP3
+    if (buffer[0] === 0xff && (buffer[1] & 0xe0) === 0xe0) {
+      const layerBits = (buffer[1] >> 1) & 0x03;
+      if (layerBits === 0) {
+        return 'aac';
+      }
+      return 'mp3';
     }
     return null;
+  }
+
+  private contentTypeForKind(kind: AudioKind): string {
+    switch (kind) {
+      case 'm4a':
+        return AUDIO_CONTENT_TYPE_M4A;
+      case 'aac':
+        return AUDIO_CONTENT_TYPE_AAC;
+      case 'mp3':
+        return AUDIO_CONTENT_TYPE_MP3;
+      default: {
+        const _exhaustive: never = kind;
+        return _exhaustive;
+      }
+    }
   }
 
   private contentTypeForObjectKey(objectKey: string): string | undefined {
@@ -201,6 +227,9 @@ export class StorageService {
     }
     if (lower.endsWith('.aac')) {
       return AUDIO_CONTENT_TYPE_AAC;
+    }
+    if (lower.endsWith('.mp3')) {
+      return AUDIO_CONTENT_TYPE_MP3;
     }
     return undefined;
   }

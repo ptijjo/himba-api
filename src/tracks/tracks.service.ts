@@ -56,7 +56,7 @@ export class TracksService {
     const artist = await this.requireArtistProfile(actor);
     this.assertPrice(dto.price);
     if (!audio) {
-      throw new BadRequestException('Fichier audio AAC/M4A requis');
+      throw new BadRequestException('Fichier audio M4A / AAC / MP3 requis');
     }
 
     const uploadedAudio = await this.storage.uploadAudio(

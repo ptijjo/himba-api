@@ -12,6 +12,8 @@ export const ALLOWED_AUDIO_MIME = [
   'audio/mp4',
   'audio/x-m4a',
   'audio/m4a',
+  'audio/mpeg',
+  'audio/mp3',
   /** Souvent envoyé par le picker mobile RN */
   'application/octet-stream',
 ] as const;
@@ -21,3 +23,4 @@ export const MAX_AUDIO_BYTES = 50 * 1024 * 1024;
 
 export const AUDIO_CONTENT_TYPE_M4A = 'audio/mp4';
 export const AUDIO_CONTENT_TYPE_AAC = 'audio/aac';
+export const AUDIO_CONTENT_TYPE_MP3 = 'audio/mpeg';
