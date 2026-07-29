@@ -1,0 +1,15 @@
+node_modules
+dist
+coverage
+.git
+.cursor
+.agents
+.claude
+.windsurf
+.env
+src/.env
+*.log
+npm-debug.log*
+test
+**/*.spec.ts
+**/*.e2e-spec.ts
