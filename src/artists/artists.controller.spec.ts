@@ -10,6 +10,7 @@ describe('ArtistsController', () => {
   let artistsService: {
     become: jest.Mock;
     findById: jest.Mock;
+    findByUserId: jest.Mock;
     update: jest.Mock;
   };
 
@@ -17,6 +18,7 @@ describe('ArtistsController', () => {
     artistsService = {
       become: jest.fn(),
       findById: jest.fn(),
+      findByUserId: jest.fn(),
       update: jest.fn(),
     };
     const module: TestingModule = await Test.createTestingModule({
@@ -38,6 +40,11 @@ describe('ArtistsController', () => {
     expect(artistsService.become).toHaveBeenCalledWith('user-1', {
       displayName: 'Alice',
     });
+  });
+
+  it('me délègue findByUserId', async () => {
+    await controller.me(mockAuthenticatedUser());
+    expect(artistsService.findByUserId).toHaveBeenCalledWith('user-1');
   });
 
   it('findOne / update délèguent', async () => {

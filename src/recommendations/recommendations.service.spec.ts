@@ -25,10 +25,31 @@ describe('RecommendationsService', () => {
     prisma.playEvent.findMany.mockResolvedValue([]);
     prisma.follow.findMany.mockResolvedValue([]);
     prisma.playlistTrack.findMany.mockResolvedValue([]);
-    prisma.track.findMany.mockResolvedValue([{ id: 't1', title: 'A' }]);
+    prisma.track.findMany.mockResolvedValue([
+      {
+        id: 't1',
+        title: 'A',
+        genre: 'AFRO',
+        price: null,
+        coverUrl: null,
+        artistId: 'a1',
+        durationMs: 1000,
+        album: { coverUrl: 'https://cdn/album.webp' },
+        artist: { id: 'a1', displayName: 'FOFO' },
+      },
+    ]);
 
     await expect(service.suggest('u1')).resolves.toEqual([
-      { id: 't1', title: 'A' },
+      {
+        id: 't1',
+        title: 'A',
+        genre: 'AFRO',
+        price: null,
+        coverUrl: 'https://cdn/album.webp',
+        artistId: 'a1',
+        durationMs: 1000,
+        artist: { id: 'a1', displayName: 'FOFO' },
+      },
     ]);
   });
 
@@ -36,7 +57,7 @@ describe('RecommendationsService', () => {
     prisma.playEvent.findMany.mockResolvedValue([
       {
         trackId: 't0',
-        track: { artistId: 'a1', genre: 'pop' },
+        track: { artistId: 'a1', genre: 'POP' },
       },
     ]);
     prisma.follow.findMany.mockResolvedValue([]);
@@ -49,7 +70,7 @@ describe('RecommendationsService', () => {
 
   it('fusionne follows + playlists et borne le limit', async () => {
     prisma.playEvent.findMany.mockResolvedValue([
-      { trackId: 't0', track: { artistId: 'a1', genre: null } },
+      { trackId: 't0', track: { artistId: 'a1', genre: 'AFRO' } },
     ]);
     prisma.follow.findMany.mockResolvedValue([{ artistId: 'a2' }]);
     prisma.playlistTrack.findMany.mockResolvedValue([

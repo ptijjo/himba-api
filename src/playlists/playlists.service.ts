@@ -1,4 +1,5 @@
 import {
+  ConflictException,
   ForbiddenException,
   Injectable,
   NotFoundException,
@@ -46,15 +47,33 @@ export class PlaylistsService {
             id: true,
             title: true,
             genre: true,
-            priceCents: true,
+            price: true,
             coverUrl: true,
             durationMs: true,
             artistId: true,
+            album: { select: { coverUrl: true } },
           },
         },
       },
     });
-    return { ...playlist, tracks };
+    return {
+      ...playlist,
+      tracks: tracks.map((row) => ({
+        ...row,
+        track: row.track
+          ? {
+              id: row.track.id,
+              title: row.track.title,
+              genre: row.track.genre,
+              price: row.track.price,
+              durationMs: row.track.durationMs,
+              artistId: row.track.artistId,
+              coverUrl:
+                row.track.coverUrl ?? row.track.album?.coverUrl ?? null,
+            }
+          : row.track,
+      })),
+    };
   }
 
   async update(userId: string, playlistId: string, dto: UpdatePlaylistDto) {
@@ -81,6 +100,15 @@ export class PlaylistsService {
     });
     if (!track) {
       throw new NotFoundException('Titre introuvable');
+    }
+    // 1. Un titre ne peut figurer qu’une fois par playlist (@@unique)
+    const existing = await this.prisma.playlistTrack.findUnique({
+      where: {
+        playlistId_trackId: { playlistId, trackId: dto.trackId },
+      },
+    });
+    if (existing) {
+      throw new ConflictException('Titre déjà dans cette playlist');
     }
     const count = await this.prisma.playlistTrack.count({
       where: { playlistId },

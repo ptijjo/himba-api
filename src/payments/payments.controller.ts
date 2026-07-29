@@ -28,6 +28,15 @@ export class PaymentsController {
     return this.paymentsService.createTrackPaymentIntent(user.id, trackId);
   }
 
+  @Post('payments/albums/:albumId/intent')
+  @Throttle({ global: { limit: 20, ttl: 60_000 } })
+  createAlbumIntent(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('albumId') albumId: string,
+  ) {
+    return this.paymentsService.createAlbumPaymentIntent(user.id, albumId);
+  }
+
   @Public()
   @Post('webhooks/stripe')
   async stripeWebhook(

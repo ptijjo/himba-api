@@ -6,7 +6,15 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import Stripe from 'stripe';
+import {
+  computeArtistShare,
+  money,
+  toStripeCents,
+} from '../common/money/money';
+import { Prisma } from '../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+
+type PaymentKind = 'track' | 'album';
 
 @Injectable()
 export class PaymentsService {
@@ -31,7 +39,6 @@ export class PaymentsService {
     );
   }
 
-  /** Exposé pour tests / injection alternative. */
   getStripe(): Stripe {
     return this.stripe;
   }
@@ -41,7 +48,7 @@ export class PaymentsService {
     if (!track) {
       throw new NotFoundException('Titre introuvable');
     }
-    if (track.priceCents === null) {
+    if (track.price === null) {
       throw new BadRequestException('Titre gratuit — pas de paiement');
     }
 
@@ -52,14 +59,18 @@ export class PaymentsService {
       throw new ConflictException('Titre déjà acheté');
     }
 
-    // 1. Créer PaymentIntent Stripe (montant titre)
+    const amount = money(track.price);
+    const stripeAmount = toStripeCents(amount);
+
+    // 1. PaymentIntent titre (Stripe = centimes)
     const intent = await this.stripe.paymentIntents.create({
-      amount: track.priceCents,
+      amount: stripeAmount,
       currency: 'eur',
       metadata: {
+        kind: 'track' satisfies PaymentKind,
         userId,
         trackId,
-        amountCents: String(track.priceCents),
+        amount: amount.toFixed(2),
       },
       automatic_payment_methods: { enabled: true },
     });
@@ -67,13 +78,52 @@ export class PaymentsService {
     return {
       clientSecret: intent.client_secret,
       paymentIntentId: intent.id,
-      amountCents: track.priceCents,
+      amount: amount.toFixed(2),
+      kind: 'track' as const,
     };
   }
 
-  /**
-   * Webhook Stripe signé + idempotent (Purchase unique userId+trackId / stripePaymentId).
-   */
+  async createAlbumPaymentIntent(userId: string, albumId: string) {
+    const album = await this.prisma.album.findUnique({ where: { id: albumId } });
+    if (!album) {
+      throw new NotFoundException('Album introuvable');
+    }
+    if (album.price === null) {
+      throw new BadRequestException(
+        'Album non vendu en bundle — achetez les titres à l’unité',
+      );
+    }
+
+    const existing = await this.prisma.albumPurchase.findUnique({
+      where: { userId_albumId: { userId, albumId } },
+    });
+    if (existing) {
+      throw new ConflictException('Album déjà acheté');
+    }
+
+    const amount = money(album.price);
+    const stripeAmount = toStripeCents(amount);
+
+    const intent = await this.stripe.paymentIntents.create({
+      amount: stripeAmount,
+      currency: 'eur',
+      metadata: {
+        kind: 'album' satisfies PaymentKind,
+        userId,
+        albumId,
+        amount: amount.toFixed(2),
+      },
+      automatic_payment_methods: { enabled: true },
+    });
+
+    return {
+      clientSecret: intent.client_secret,
+      paymentIntentId: intent.id,
+      amount: amount.toFixed(2),
+      kind: 'album' as const,
+    };
+  }
+
   async handleWebhook(rawBody: Buffer, signature: string): Promise<void> {
     if (!this.webhookSecret) {
       throw new BadRequestException('STRIPE_WEBHOOK_SECRET manquant');
@@ -95,19 +145,50 @@ export class PaymentsService {
     }
 
     const intent = event.data.object as Stripe.PaymentIntent;
+    const kind = (intent.metadata?.kind ?? 'track') as PaymentKind;
     const userId = intent.metadata?.userId;
-    const trackId = intent.metadata?.trackId;
-    const amountCents = Number(
-      intent.metadata?.amountCents ?? intent.amount,
-    );
+    const amount = money(intent.metadata?.amount ?? intent.amount / 100);
 
-    if (!userId || !trackId || !Number.isFinite(amountCents)) {
+    if (!userId || !amount.isFinite()) {
       throw new BadRequestException('Metadata PaymentIntent incomplète');
     }
 
-    // 2. Idempotence : déjà confirmé via stripePaymentId
+    switch (kind) {
+      case 'album':
+        await this.confirmAlbumPurchase(
+          userId,
+          intent.metadata?.albumId,
+          amount,
+          intent.id,
+        );
+        return;
+      case 'track':
+        await this.confirmTrackPurchase(
+          userId,
+          intent.metadata?.trackId,
+          amount,
+          intent.id,
+        );
+        return;
+      default: {
+        const _exhaustive: never = kind;
+        throw new BadRequestException(`Kind paiement inconnu: ${_exhaustive}`);
+      }
+    }
+  }
+
+  private async confirmTrackPurchase(
+    userId: string,
+    trackId: string | undefined,
+    amount: Prisma.Decimal,
+    stripePaymentId: string,
+  ): Promise<void> {
+    if (!trackId) {
+      throw new BadRequestException('Metadata PaymentIntent incomplète');
+    }
+
     const byStripe = await this.prisma.purchase.findUnique({
-      where: { stripePaymentId: intent.id },
+      where: { stripePaymentId },
     });
     if (byStripe) {
       return;
@@ -120,34 +201,66 @@ export class PaymentsService {
       return;
     }
 
-    // 3. Snapshot commission plateforme
-    const platformShare = Math.floor(
-      (amountCents * this.commissionPercent) / 100,
-    );
-    const artistAmountCents = amountCents - platformShare;
+    const share = computeArtistShare(amount, this.commissionPercent);
 
     await this.prisma.purchase.create({
       data: {
         userId,
         trackId,
-        amountCents,
-        platformCommissionPercent: this.commissionPercent,
-        artistAmountCents,
-        stripePaymentId: intent.id,
+        amount,
+        platformCommissionPercent: share.platformCommissionPercent,
+        artistAmount: share.artistAmount,
+        stripePaymentId,
       },
     });
   }
 
-  computeArtistAmount(amountCents: number): {
+  private async confirmAlbumPurchase(
+    userId: string,
+    albumId: string | undefined,
+    amount: Prisma.Decimal,
+    stripePaymentId: string,
+  ): Promise<void> {
+    if (!albumId) {
+      throw new BadRequestException('Metadata PaymentIntent incomplète');
+    }
+
+    const byStripe = await this.prisma.albumPurchase.findUnique({
+      where: { stripePaymentId },
+    });
+    if (byStripe) {
+      return;
+    }
+
+    const alreadyOwned = await this.prisma.albumPurchase.findUnique({
+      where: { userId_albumId: { userId, albumId } },
+    });
+    if (alreadyOwned) {
+      return;
+    }
+
+    const share = computeArtistShare(amount, this.commissionPercent);
+
+    await this.prisma.albumPurchase.create({
+      data: {
+        userId,
+        albumId,
+        amount,
+        platformCommissionPercent: share.platformCommissionPercent,
+        artistAmount: share.artistAmount,
+        stripePaymentId,
+      },
+    });
+  }
+
+  computeArtistAmount(amountEuros: number): {
     platformCommissionPercent: number;
-    artistAmountCents: number;
+    artistAmount: string;
   } {
-    const platformShare = Math.floor(
-      (amountCents * this.commissionPercent) / 100,
-    );
+    const share = computeArtistShare(money(amountEuros), this.commissionPercent);
     return {
-      platformCommissionPercent: this.commissionPercent,
-      artistAmountCents: amountCents - platformShare,
+      platformCommissionPercent: share.platformCommissionPercent,
+      artistAmount: share.artistAmount.toFixed(2),
     };
   }
 }

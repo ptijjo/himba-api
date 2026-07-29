@@ -5,20 +5,33 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { Track, UserRole } from '../generated/prisma/client';
+import { Track, TrackGenre, UserRole, Prisma } from '../generated/prisma/client';
 import { ArtistsService } from '../artists/artists.service';
+import { assertMoneyInRange, money } from '../common/money/money';
 import { parseLimit } from '../common/pagination/cursor.dto';
 import { PrismaService } from '../prisma/prisma.service';
 import { StorageService } from '../storage/storage.service';
 import { CreateTrackDto } from './dto/create-track.dto';
 import { UpdateTrackDto } from './dto/update-track.dto';
+import { listTrackGenres } from './track-genres';
 
 export type TrackAccessActor = { id: string; role: UserRole };
 
+/** Réponse publique : pas de clé R2 ; prix en number euros (JSON-friendly). */
+export type PublicTrack = Omit<Track, 'audioObjectKey' | 'price'> & {
+  price: number | null;
+};
+
+/** Include Prisma — cover album pour fallback titre sans cover propre. */
+const trackPublicInclude = {
+  artist: { select: { id: true, displayName: true } },
+  album: { select: { coverUrl: true } },
+} as const;
+
 @Injectable()
 export class TracksService {
-  private readonly priceMin: number;
-  private readonly priceMax: number;
+  private readonly priceMin: Prisma.Decimal;
+  private readonly priceMax: Prisma.Decimal;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -26,11 +39,11 @@ export class TracksService {
     private readonly artistsService: ArtistsService,
     private readonly configService: ConfigService,
   ) {
-    this.priceMin = Number(
-      this.configService.getOrThrow<string | number>('TRACK_PRICE_MIN_CENTS'),
+    this.priceMin = money(
+      this.configService.getOrThrow<string | number>('TRACK_PRICE_MIN'),
     );
-    this.priceMax = Number(
-      this.configService.getOrThrow<string | number>('TRACK_PRICE_MAX_CENTS'),
+    this.priceMax = money(
+      this.configService.getOrThrow<string | number>('TRACK_PRICE_MAX'),
     );
   }
 
@@ -39,9 +52,9 @@ export class TracksService {
     dto: CreateTrackDto,
     audio: Express.Multer.File,
     cover?: Express.Multer.File,
-  ): Promise<Track> {
+  ): Promise<PublicTrack> {
     const artist = await this.requireArtistProfile(actor);
-    this.assertPrice(dto.priceCents);
+    this.assertPrice(dto.price);
     if (!audio) {
       throw new BadRequestException('Fichier audio AAC/M4A requis');
     }
@@ -61,26 +74,60 @@ export class TracksService {
         uploadedCover.publicUrl ?? `r2://${uploadedCover.objectKey}`;
     }
 
-    return this.prisma.track.create({
+    let albumId: string | undefined;
+    let albumPosition: number | undefined;
+    if (dto.albumId) {
+      // 1. Vérifier album du même artiste + plafond
+      const album = await this.prisma.album.findUnique({
+        where: { id: dto.albumId },
+      });
+      if (!album || album.artistId !== artist.id) {
+        throw new ForbiddenException('Album introuvable ou non propriétaire');
+      }
+      const tracksMax = Number(
+        this.configService.get<string | number>('ALBUM_TRACKS_MAX', 100),
+      );
+      const count = await this.prisma.track.count({
+        where: { albumId: dto.albumId },
+      });
+      if (count >= tracksMax) {
+        throw new BadRequestException(
+          `Album plein : max ${tracksMax} titres (ALBUM_TRACKS_MAX)`,
+        );
+      }
+      albumId = dto.albumId;
+      albumPosition = count;
+      // 2. Sans cover titre → hériter de la couverture album
+      if (!coverUrl && album.coverUrl) {
+        coverUrl = album.coverUrl;
+      }
+    }
+
+    const created = await this.prisma.track.create({
       data: {
         artistId: artist.id,
+        albumId,
+        albumPosition,
         title: dto.title.trim(),
         genre: dto.genre,
-        priceCents: dto.priceCents ?? null,
+        price: dto.price ?? null,
         audioObjectKey: uploadedAudio.objectKey,
         coverUrl,
         durationMs: dto.durationMs,
       },
+      include: trackPublicInclude,
     });
+    return this.toPublicTrack(created);
   }
 
-  async list(cursor?: string, limit?: number) {
+  async list(cursor?: string, limit?: number, genre?: TrackGenre) {
     const take = parseLimit(limit);
     const tracks = await this.prisma.track.findMany({
+      where: genre ? { genre } : undefined,
       take: take + 1,
       ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
       orderBy: { createdAt: 'desc' },
-      include: { artist: { select: { id: true, displayName: true } } },
+      include: trackPublicInclude,
     });
     const hasMore = tracks.length > take;
     const items = hasMore ? tracks.slice(0, take) : tracks;
@@ -90,10 +137,14 @@ export class TracksService {
     };
   }
 
+  listGenres() {
+    return listTrackGenres();
+  }
+
   async findById(id: string) {
     const track = await this.prisma.track.findUnique({
       where: { id },
-      include: { artist: { select: { id: true, displayName: true } } },
+      include: trackPublicInclude,
     });
     if (!track) {
       throw new NotFoundException('Titre introuvable');
@@ -105,21 +156,23 @@ export class TracksService {
     trackId: string,
     actor: TrackAccessActor,
     dto: UpdateTrackDto,
-  ): Promise<Track> {
+  ): Promise<PublicTrack> {
     const track = await this.requireTrack(trackId);
     await this.assertTrackOwner(track, actor);
-    if (dto.priceCents !== undefined) {
-      this.assertPrice(dto.priceCents);
+    if (dto.price !== undefined) {
+      this.assertPrice(dto.price);
     }
-    return this.prisma.track.update({
+    const updated = await this.prisma.track.update({
       where: { id: trackId },
       data: {
         title: dto.title?.trim(),
         genre: dto.genre,
-        priceCents: dto.priceCents === undefined ? undefined : dto.priceCents,
+        price: dto.price === undefined ? undefined : dto.price,
         durationMs: dto.durationMs,
       },
+      include: trackPublicInclude,
     });
+    return this.toPublicTrack(updated);
   }
 
   async remove(trackId: string, actor: TrackAccessActor): Promise<void> {
@@ -160,42 +213,47 @@ export class TracksService {
   }
 
   private async assertCanStream(track: Track, userId: string): Promise<void> {
-    if (track.priceCents === null) {
+    if (track.price === null) {
       return;
     }
-    const purchase = await this.prisma.purchase.findUnique({
-      where: { userId_trackId: { userId, trackId: track.id } },
-    });
-    if (!purchase) {
-      throw new ForbiddenException('Achat requis pour streamer ce titre');
+    if (await this.userOwnsTrackAccess(userId, track)) {
+      return;
     }
+    throw new ForbiddenException('Achat requis pour streamer ce titre');
   }
 
   private async assertCanDownload(track: Track, userId: string): Promise<void> {
-    if (track.priceCents === null) {
+    if (track.price === null) {
       return;
     }
+    if (await this.userOwnsTrackAccess(userId, track)) {
+      return;
+    }
+    throw new ForbiddenException('Achat requis pour télécharger ce titre');
+  }
+
+  /** Accès payant : Purchase titre OU AlbumPurchase de l’album contenant le titre. */
+  private async userOwnsTrackAccess(
+    userId: string,
+    track: Track,
+  ): Promise<boolean> {
     const purchase = await this.prisma.purchase.findUnique({
       where: { userId_trackId: { userId, trackId: track.id } },
     });
-    if (!purchase) {
-      throw new ForbiddenException('Achat requis pour télécharger ce titre');
+    if (purchase) {
+      return true;
     }
+    if (!track.albumId) {
+      return false;
+    }
+    const albumPurchase = await this.prisma.albumPurchase.findUnique({
+      where: { userId_albumId: { userId, albumId: track.albumId } },
+    });
+    return Boolean(albumPurchase);
   }
 
-  private assertPrice(priceCents: number | null | undefined): void {
-    if (priceCents === null || priceCents === undefined) {
-      return;
-    }
-    if (
-      !Number.isInteger(priceCents) ||
-      priceCents < this.priceMin ||
-      priceCents > this.priceMax
-    ) {
-      throw new BadRequestException(
-        `Prix hors fourchette [${this.priceMin}, ${this.priceMax}] centimes`,
-      );
-    }
+  private assertPrice(price: number | null | undefined): void {
+    assertMoneyInRange(price, this.priceMin, this.priceMax);
   }
 
   private async requireTrack(id: string): Promise<Track> {
@@ -230,8 +288,24 @@ export class TracksService {
     }
   }
 
-  private toPublicTrack<T extends Track>(track: T) {
-    const { audioObjectKey: _key, ...rest } = track;
-    return rest;
+  /**
+   * Sérialise un titre pour le client.
+   * coverUrl titre sinon couverture album (titres rattachés sans image propre).
+   */
+  private toPublicTrack<T extends Track>(
+    track: T & {
+      album?: { coverUrl: string | null } | null;
+      artist?: { id: string; displayName: string };
+    },
+  ): PublicTrack & Omit<T, keyof Track | 'album'> {
+    const { audioObjectKey: _key, price, album, ...rest } = track;
+    const resolvedCover =
+      rest.coverUrl ?? album?.coverUrl ?? null;
+    return {
+      ...rest,
+      coverUrl: resolvedCover,
+      // Decimal Prisma → number euros (JSON-friendly pour le client RTK/Zod)
+      price: price == null ? null : Number(price),
+    } as PublicTrack & Omit<T, keyof Track | 'album'>;
   }
 }

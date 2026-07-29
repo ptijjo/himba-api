@@ -39,8 +39,8 @@ describe('TracksService', () => {
     id: 't-free',
     artistId: 'artist-1',
     title: 'Free',
-    genre: 'pop',
-    priceCents: null,
+    genre: 'AFRO',
+    price: null,
     audioObjectKey: 'audio/free.m4a',
     coverUrl: null,
     durationMs: 1000,
@@ -52,7 +52,7 @@ describe('TracksService', () => {
     ...freeTrack,
     id: 't-paid',
     title: 'Paid',
-    priceCents: 199,
+    price: 1.99,
     audioObjectKey: 'audio/paid.m4a',
   };
 
@@ -78,7 +78,7 @@ describe('TracksService', () => {
     await expect(
       service.create(
         { id: 'user-1', role: UserRole.ARTIST },
-        { title: 'X', priceCents: 1 },
+        { title: 'X', genre: 'RAP', price: 0.01 },
         {
           buffer: Buffer.from('a'),
           mimetype: 'audio/mp4',
@@ -100,6 +100,7 @@ describe('TracksService', () => {
   it('stream payant sans Purchase → 403', async () => {
     prisma.track.findUnique.mockResolvedValue(paidTrack);
     prisma.purchase.findUnique.mockResolvedValue(null);
+    prisma.albumPurchase.findUnique.mockResolvedValue(null);
 
     await expect(service.getStreamUrl('t-paid', 'u2')).rejects.toBeInstanceOf(
       ForbiddenException,
@@ -118,10 +119,22 @@ describe('TracksService', () => {
   it('download payant sans Purchase → 403', async () => {
     prisma.track.findUnique.mockResolvedValue(paidTrack);
     prisma.purchase.findUnique.mockResolvedValue(null);
+    prisma.albumPurchase.findUnique.mockResolvedValue(null);
 
     await expect(
       service.getDownloadUrl('t-paid', 'u2'),
     ).rejects.toBeInstanceOf(ForbiddenException);
+  });
+
+  it('stream payant avec AlbumPurchase OK', async () => {
+    const albumTrack = { ...paidTrack, albumId: 'alb-1' };
+    prisma.track.findUnique.mockResolvedValue(albumTrack);
+    prisma.purchase.findUnique.mockResolvedValue(null);
+    prisma.albumPurchase.findUnique.mockResolvedValue({ id: 'ap1' });
+
+    await expect(service.getStreamUrl('t-paid', 'u2')).resolves.toMatchObject({
+      url: expect.any(String),
+    });
   });
 
   it('create titre gratuit OK', async () => {
@@ -136,10 +149,17 @@ describe('TracksService', () => {
     await expect(
       service.create(
         { id: 'user-1', role: UserRole.ARTIST },
-        { title: 'Free', priceCents: null },
+        { title: 'Free', genre: 'AFRO', price: null },
         audio,
       ),
-    ).resolves.toMatchObject({ title: 'Free' });
+    ).resolves.toMatchObject({ title: 'Free', price: null });
+
+    const created = await service.create(
+      { id: 'user-1', role: UserRole.ARTIST },
+      { title: 'Free', genre: 'AFRO', price: null },
+      audio,
+    );
+    expect(created).not.toHaveProperty('audioObjectKey');
   });
 
   it('update / remove propriétaire OK', async () => {
@@ -172,6 +192,22 @@ describe('TracksService', () => {
     expect(page.items[0]).not.toHaveProperty('audioObjectKey');
   });
 
+  it('list filtre par genre + listGenres', async () => {
+    prisma.track.findMany.mockResolvedValue([]);
+    await service.list(undefined, 20, 'SHATTA');
+    expect(prisma.track.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { genre: 'SHATTA' } }),
+    );
+    expect(service.listGenres()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: 'RAP', label: 'Rap' }),
+        expect.objectContaining({ id: 'AFRO' }),
+        expect.objectContaining({ id: 'ZOUK' }),
+        expect.objectContaining({ id: 'SHATTA' }),
+      ]),
+    );
+  });
+
   it('list sans page suivante', async () => {
     prisma.track.findMany.mockResolvedValue([
       { ...freeTrack, id: '1', artist: { id: 'a', displayName: 'A' } },
@@ -184,7 +220,7 @@ describe('TracksService', () => {
     await expect(
       service.create(
         { id: 'user-1', role: UserRole.ARTIST },
-        { title: 'X' },
+        { title: 'X', genre: 'RAP' },
         undefined as unknown as Express.Multer.File,
       ),
     ).rejects.toBeInstanceOf(BadRequestException);
@@ -192,7 +228,7 @@ describe('TracksService', () => {
     await expect(
       service.create(
         { id: 'user-1', role: UserRole.LISTENER },
-        { title: 'X' },
+        { title: 'X', genre: 'RAP' },
         {
           buffer: Buffer.from('a'),
           mimetype: 'audio/mp4',
@@ -203,12 +239,65 @@ describe('TracksService', () => {
     ).rejects.toBeInstanceOf(ForbiddenException);
   });
 
+  it('create sur album hérite de la cover album', async () => {
+    prisma.album.findUnique.mockResolvedValue({
+      id: 'alb-1',
+      artistId: 'artist-1',
+      coverUrl: 'https://cdn.himba.test/albums/cover.webp',
+    });
+    prisma.track.count.mockResolvedValue(0);
+    prisma.track.create.mockResolvedValue({
+      ...freeTrack,
+      albumId: 'alb-1',
+      coverUrl: 'https://cdn.himba.test/albums/cover.webp',
+      album: { coverUrl: 'https://cdn.himba.test/albums/cover.webp' },
+      artist: { id: 'artist-1', displayName: 'Alice' },
+    });
+
+    const created = await service.create(
+      { id: 'user-1', role: UserRole.ARTIST },
+      { title: 'Free', genre: 'AFRO', albumId: 'alb-1' },
+      {
+        buffer: Buffer.from('a'),
+        mimetype: 'audio/mp4',
+        originalname: 'a.m4a',
+        size: 1,
+      } as Express.Multer.File,
+    );
+
+    expect(prisma.track.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          albumId: 'alb-1',
+          coverUrl: 'https://cdn.himba.test/albums/cover.webp',
+        }),
+      }),
+    );
+    expect(created.coverUrl).toBe(
+      'https://cdn.himba.test/albums/cover.webp',
+    );
+    expect(created).not.toHaveProperty('album');
+  });
+
+  it('findById fallback cover album si titre sans cover', async () => {
+    prisma.track.findUnique.mockResolvedValue({
+      ...freeTrack,
+      albumId: 'alb-1',
+      coverUrl: null,
+      artist: { id: 'a', displayName: 'A' },
+      album: { coverUrl: 'https://cdn.himba.test/albums/x.webp' },
+    });
+    await expect(service.findById('t-free')).resolves.toMatchObject({
+      coverUrl: 'https://cdn.himba.test/albums/x.webp',
+    });
+  });
+
   it('create refuse sans profil artiste + upload cover sans publicUrl', async () => {
     artistsService.findByUserId.mockResolvedValue(null);
     await expect(
       service.create(
         { id: 'user-1', role: UserRole.ARTIST },
-        { title: 'X' },
+        { title: 'X', genre: 'SHATTA' },
         {
           buffer: Buffer.from('a'),
           mimetype: 'audio/mp4',
@@ -227,7 +316,7 @@ describe('TracksService', () => {
     await expect(
       service.create(
         { id: 'user-1', role: UserRole.ARTIST },
-        { title: 'Free', priceCents: 199 },
+        { title: 'Free', genre: 'ZOUK', price: 1.99 },
         {
           buffer: Buffer.from('a'),
           mimetype: 'audio/mp4',
@@ -268,7 +357,7 @@ describe('TracksService', () => {
     await service.update(
       't-free',
       { id: 'admin', role: UserRole.ADMIN },
-      { priceCents: 250 },
+      { price: 2.50 },
     );
 
     prisma.track.findUnique.mockResolvedValue(freeTrack);

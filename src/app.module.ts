@@ -5,6 +5,7 @@ import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { ArtistsModule } from './artists/artists.module';
+import { AlbumsModule } from './albums/albums.module';
 import { AuthModule } from './auth/auth.module';
 import { JwtAuthGuardGlobal } from './auth/guards/jwt-auth.guard.global';
 import { RolesGuard } from './auth/guards/roles.guard';
@@ -44,6 +45,7 @@ import { UsersModule } from './users/users.module';
     UsersModule,
     AuthModule,
     ArtistsModule,
+    AlbumsModule,
     TracksModule,
     PlaylistsModule,
     LibraryModule,

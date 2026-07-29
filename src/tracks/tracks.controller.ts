@@ -18,8 +18,8 @@ import { Roles } from '../auth/decorators/roles.decorator';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import type { AuthenticatedUser } from '../auth/types/authenticated-user.type';
 import { UserRole } from '../generated/prisma/client';
-import { CursorPaginationQueryDto } from '../common/pagination/cursor.dto';
 import { CreateTrackDto } from './dto/create-track.dto';
+import { ListTracksQueryDto } from './dto/list-tracks-query.dto';
 import { UpdateTrackDto } from './dto/update-track.dto';
 import { TracksService } from './tracks.service';
 
@@ -27,9 +27,14 @@ import { TracksService } from './tracks.service';
 export class TracksController {
   constructor(private readonly tracksService: TracksService) {}
 
+  @Get('genres')
+  listGenres() {
+    return this.tracksService.listGenres();
+  }
+
   @Get()
-  list(@Query() query: CursorPaginationQueryDto) {
-    return this.tracksService.list(query.cursor, query.limit);
+  list(@Query() query: ListTracksQueryDto) {
+    return this.tracksService.list(query.cursor, query.limit, query.genre);
   }
 
   @Get(':id')

@@ -1,8 +1,13 @@
 import { BadRequestException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Test, TestingModule } from '@nestjs/testing';
-import { PutObjectCommand } from '@aws-sdk/client-s3';
-import { S3_CLIENT } from './storage.constants';
+import { GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3';
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
+import {
+  AUDIO_CONTENT_TYPE_AAC,
+  AUDIO_CONTENT_TYPE_M4A,
+  S3_CLIENT,
+} from './storage.constants';
 import { StorageService } from './storage.service';
 
 jest.mock('sharp', () => {
@@ -19,12 +24,30 @@ jest.mock('@aws-sdk/s3-request-presigner', () => ({
   getSignedUrl: jest.fn().mockResolvedValue('https://signed.example/audio'),
 }));
 
+/** Conteneur ISO BMFF (M4A) — magic `ftyp` à l’offset 4. */
+function fakeM4aBuffer(): Buffer {
+  const buf = Buffer.alloc(32, 0);
+  buf.writeUInt32BE(28, 0);
+  buf.write('ftyp', 4);
+  buf.write('M4A ', 8);
+  return buf;
+}
+
+/** Flux ADTS (AAC raw) — sync 0xFFF. */
+function fakeAdtsBuffer(): Buffer {
+  const buf = Buffer.alloc(64, 0);
+  buf[0] = 0xff;
+  buf[1] = 0xf1;
+  return buf;
+}
+
 describe('StorageService', () => {
   let service: StorageService;
   let s3Send: jest.Mock;
 
   beforeEach(async () => {
     s3Send = jest.fn().mockResolvedValue({});
+    jest.mocked(getSignedUrl).mockClear();
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         StorageService,
@@ -82,18 +105,46 @@ describe('StorageService', () => {
     ).rejects.toBeInstanceOf(BadRequestException);
   });
 
-  it('uploadAudio accepte AAC/M4A', async () => {
+  it('uploadAudio sniffe M4A et force ContentType audio/mp4', async () => {
     const file = {
-      buffer: Buffer.from('audio'),
+      buffer: fakeM4aBuffer(),
       size: 1000,
-      mimetype: 'audio/mp4',
+      mimetype: 'application/octet-stream',
       originalname: 'track.m4a',
     } as Express.Multer.File;
 
     const result = await service.uploadAudio(file, 'audio');
 
     expect(result.objectKey).toMatch(/^audio\/.+\.m4a$/);
-    expect(s3Send).toHaveBeenCalled();
+    const put = s3Send.mock.calls[0][0] as PutObjectCommand;
+    expect(put.input.ContentType).toBe(AUDIO_CONTENT_TYPE_M4A);
+  });
+
+  it('uploadAudio sniffe ADTS et stocke .aac', async () => {
+    const file = {
+      buffer: fakeAdtsBuffer(),
+      size: 100,
+      mimetype: 'audio/aac',
+      originalname: 'song.aac',
+    } as Express.Multer.File;
+
+    const result = await service.uploadAudio(file, 'audio');
+    expect(result.objectKey).toMatch(/\.aac$/);
+    const put = s3Send.mock.calls[0][0] as PutObjectCommand;
+    expect(put.input.ContentType).toBe(AUDIO_CONTENT_TYPE_AAC);
+  });
+
+  it('rejette buffer sans magic audio', async () => {
+    const file = {
+      buffer: Buffer.from('not-audio-at-all'),
+      size: 1000,
+      mimetype: 'audio/mp4',
+      originalname: 'track.m4a',
+    } as Express.Multer.File;
+
+    await expect(service.uploadAudio(file, 'audio')).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
   });
 
   it('rejette audio non AAC', async () => {
@@ -109,16 +160,28 @@ describe('StorageService', () => {
     );
   });
 
-  it('getSignedUrl délègue au presigner', async () => {
-    await expect(service.getSignedUrl('audio/x.aac')).resolves.toBe(
+  it('getSignedUrl impose ResponseContentType selon extension', async () => {
+    await expect(service.getSignedUrl('audio/x.m4a')).resolves.toBe(
       'https://signed.example/audio',
     );
+    expect(getSignedUrl).toHaveBeenCalled();
+    const cmd = jest.mocked(getSignedUrl).mock.calls[0][1] as GetObjectCommand;
+    expect(cmd.input.ResponseContentType).toBe(AUDIO_CONTENT_TYPE_M4A);
+
+    await service.getSignedUrl('audio/x.aac');
+    const cmdAac = jest.mocked(getSignedUrl).mock
+      .calls[1][1] as GetObjectCommand;
+    expect(cmdAac.input.ResponseContentType).toBe(AUDIO_CONTENT_TYPE_AAC);
   });
 
   it('rejette image / audio vides ou trop lourds', async () => {
     await expect(
       service.uploadImage(
-        { buffer: Buffer.alloc(0), size: 0, mimetype: 'image/jpeg' } as Express.Multer.File,
+        {
+          buffer: Buffer.alloc(0),
+          size: 0,
+          mimetype: 'image/jpeg',
+        } as Express.Multer.File,
         'cover',
         'covers',
       ),
@@ -138,7 +201,11 @@ describe('StorageService', () => {
 
     await expect(
       service.uploadAudio(
-        { buffer: Buffer.alloc(0), size: 0, mimetype: 'audio/aac' } as Express.Multer.File,
+        {
+          buffer: Buffer.alloc(0),
+          size: 0,
+          mimetype: 'audio/aac',
+        } as Express.Multer.File,
         'audio',
       ),
     ).rejects.toBeInstanceOf(BadRequestException);
@@ -146,7 +213,7 @@ describe('StorageService', () => {
     await expect(
       service.uploadAudio(
         {
-          buffer: Buffer.from('x'),
+          buffer: fakeAdtsBuffer(),
           size: 51 * 1024 * 1024,
           mimetype: 'audio/aac',
           originalname: 'a.aac',
@@ -156,9 +223,9 @@ describe('StorageService', () => {
     ).rejects.toBeInstanceOf(BadRequestException);
   });
 
-  it('uploadAudio accepte extension .aac et avatar resize', async () => {
+  it('uploadAudio + avatar resize', async () => {
     const aac = {
-      buffer: Buffer.from('audio'),
+      buffer: fakeAdtsBuffer(),
       size: 100,
       mimetype: 'audio/aac',
       originalname: 'song.aac',

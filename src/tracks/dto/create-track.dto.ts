@@ -1,5 +1,6 @@
 import {
-  IsInt,
+  IsEnum,
+  IsNumber,
   IsOptional,
   IsString,
   MaxLength,
@@ -7,7 +8,19 @@ import {
   MinLength,
   ValidateIf,
 } from 'class-validator';
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
+import { TrackGenre } from '../../generated/prisma/client';
+
+/** FormData envoie tout en string ; "" / "null" → omis / null. */
+function emptyToUndefined({ value }: { value: unknown }): unknown {
+  if (value === '' || value === undefined) {
+    return undefined;
+  }
+  if (value === 'null' || value === null) {
+    return null;
+  }
+  return value;
+}
 
 export class CreateTrackDto {
   @IsString()
@@ -15,22 +28,34 @@ export class CreateTrackDto {
   @MaxLength(200)
   title!: string;
 
-  @IsOptional()
-  @IsString()
-  @MaxLength(80)
-  genre?: string;
+  /** Genre obligatoire — enum Prisma TrackGenre (accepte minuscules via Transform) */
+  @Transform(({ value }: { value: unknown }) =>
+    typeof value === 'string' ? value.trim().toUpperCase() : value,
+  )
+  @IsEnum(TrackGenre, {
+    message: `genre doit être l’un de : ${Object.values(TrackGenre).join(', ')}`,
+  })
+  genre!: TrackGenre;
 
-  /** null / omis = gratuit ; sinon centimes dans la fourchette .env */
+  /** null / omis = gratuit ; sinon euros (max 2 décimales) */
   @IsOptional()
+  @Transform(emptyToUndefined)
   @ValidateIf((_, v) => v !== null && v !== undefined)
   @Type(() => Number)
-  @IsInt()
-  @Min(0)
-  priceCents?: number | null;
+  @IsNumber({ maxDecimalPlaces: 2 })
+  @Min(0.01)
+  price?: number | null;
 
   @IsOptional()
+  @Transform(emptyToUndefined)
+  @ValidateIf((_, v) => v !== null && v !== undefined)
   @Type(() => Number)
-  @IsInt()
+  @IsNumber()
   @Min(1)
   durationMs?: number;
+
+  @IsOptional()
+  @Transform(emptyToUndefined)
+  @IsString()
+  albumId?: string;
 }

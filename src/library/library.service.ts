@@ -66,21 +66,41 @@ export class LibraryService {
   }
 
   listFavorites(userId: string) {
-    return this.prisma.favorite.findMany({
-      where: { userId },
-      include: {
-        track: {
-          select: {
-            id: true,
-            title: true,
-            genre: true,
-            priceCents: true,
-            coverUrl: true,
-            artistId: true,
+    return this.prisma.favorite
+      .findMany({
+        where: { userId },
+        include: {
+          track: {
+            select: {
+              id: true,
+              title: true,
+              genre: true,
+              price: true,
+              coverUrl: true,
+              artistId: true,
+              durationMs: true,
+              album: { select: { coverUrl: true } },
+            },
           },
         },
-      },
-      orderBy: { createdAt: 'desc' },
-    });
+        orderBy: { createdAt: 'desc' },
+      })
+      .then((items) =>
+        items.map((fav) => ({
+          ...fav,
+          track: fav.track
+            ? {
+                id: fav.track.id,
+                title: fav.track.title,
+                genre: fav.track.genre,
+                price: fav.track.price,
+                artistId: fav.track.artistId,
+                durationMs: fav.track.durationMs,
+                coverUrl:
+                  fav.track.coverUrl ?? fav.track.album?.coverUrl ?? null,
+              }
+            : undefined,
+        })),
+      );
   }
 }

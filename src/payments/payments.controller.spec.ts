@@ -10,12 +10,14 @@ describe('PaymentsController', () => {
   let controller: PaymentsController;
   let paymentsService: {
     createTrackPaymentIntent: jest.Mock;
+    createAlbumPaymentIntent: jest.Mock;
     handleWebhook: jest.Mock;
   };
 
   beforeEach(async () => {
     paymentsService = {
       createTrackPaymentIntent: jest.fn(),
+      createAlbumPaymentIntent: jest.fn(),
       handleWebhook: jest.fn(),
     };
     const module: TestingModule = await Test.createTestingModule({
@@ -35,6 +37,14 @@ describe('PaymentsController', () => {
     expect(paymentsService.createTrackPaymentIntent).toHaveBeenCalledWith(
       'user-1',
       't1',
+    );
+  });
+
+  it('createAlbumIntent délègue', async () => {
+    await controller.createAlbumIntent(mockAuthenticatedUser(), 'alb-1');
+    expect(paymentsService.createAlbumPaymentIntent).toHaveBeenCalledWith(
+      'user-1',
+      'alb-1',
     );
   });
 

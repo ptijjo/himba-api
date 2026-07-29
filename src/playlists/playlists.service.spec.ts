@@ -1,4 +1,8 @@
-import { ForbiddenException, NotFoundException } from '@nestjs/common';
+import {
+  ConflictException,
+  ForbiddenException,
+  NotFoundException,
+} from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import {
   createMockPrismaService,
@@ -36,12 +40,30 @@ describe('PlaylistsService', () => {
       userId: 'u1',
     });
     prisma.track.findUnique.mockResolvedValue({ id: 't1' });
+    prisma.playlistTrack.findUnique.mockResolvedValue(null);
     prisma.playlistTrack.count.mockResolvedValue(0);
     prisma.playlistTrack.create.mockResolvedValue({ id: 'pt1' });
 
     await expect(
       service.addTrack('u1', 'p1', { trackId: 't1' }),
     ).resolves.toMatchObject({ id: 'pt1' });
+  });
+
+  it('addTrack refuse un titre déjà dans la playlist → 409', async () => {
+    prisma.playlist.findUnique.mockResolvedValue({
+      id: 'p1',
+      userId: 'u1',
+    });
+    prisma.track.findUnique.mockResolvedValue({ id: 't1' });
+    prisma.playlistTrack.findUnique.mockResolvedValue({
+      playlistId: 'p1',
+      trackId: 't1',
+    });
+
+    await expect(
+      service.addTrack('u1', 'p1', { trackId: 't1' }),
+    ).rejects.toBeInstanceOf(ConflictException);
+    expect(prisma.playlistTrack.create).not.toHaveBeenCalled();
   });
 
   it('listMine / get / update / remove / removeTrack', async () => {

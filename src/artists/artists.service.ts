@@ -30,7 +30,12 @@ export class ArtistsService {
       throw new ConflictException('Profil artiste déjà créé');
     }
 
-    // 1. Créer Artist + promouvoir rôle (gratuit)
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) {
+      throw new NotFoundException('Utilisateur introuvable');
+    }
+
+    // 1. Créer Artist ; 2. LISTENER → ARTIST (ADMIN conserve son rôle)
     const artist = await this.prisma.$transaction(async (tx) => {
       const created = await tx.artist.create({
         data: {
@@ -39,10 +44,12 @@ export class ArtistsService {
           bio: dto.bio,
         },
       });
-      await tx.user.update({
-        where: { id: userId },
-        data: { role: UserRole.ARTIST },
-      });
+      if (user.role === UserRole.LISTENER) {
+        await tx.user.update({
+          where: { id: userId },
+          data: { role: UserRole.ARTIST },
+        });
+      }
       return created;
     });
 

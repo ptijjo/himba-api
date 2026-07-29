@@ -21,6 +21,22 @@ enum UserStatus {
   BANNED
 }
 
+/// Genres catalogue — ajouter une valeur = migration Prisma.
+enum TrackGenre {
+  RAP
+  AFRO
+  ZOUK
+  SHATTA
+  COUPE_DECALE
+  DANCEHALL
+  RNB
+  POP
+  GOSPEL
+  REGGAE
+  KOMPA
+  OTHER
+}
+
 model User {
   id           String     @id @default(cuid())
   username     String     @unique
@@ -33,13 +49,14 @@ model User {
   createdAt    DateTime   @default(now())
   updatedAt    DateTime   @updatedAt
 
-  artist       Artist?
-  playlists    Playlist[]
-  follows      Follow[]
-  favorites    Favorite[]
-  ratings      Rating[]
-  playEvents   PlayEvent[]
-  purchases    Purchase[]
+  artist         Artist?
+  playlists      Playlist[]
+  follows        Follow[]
+  favorites      Favorite[]
+  ratings        Rating[]
+  playEvents     PlayEvent[]
+  purchases      Purchase[]
+  albumPurchases AlbumPurchase[]
 
   @@index([email])
   @@index([username])
@@ -56,6 +73,7 @@ model Artist {
   updatedAt   DateTime @updatedAt
 
   user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  albums   Album[]
   tracks   Track[]
   follows  Follow[]
   ratings  Rating[]
@@ -63,12 +81,37 @@ model Artist {
   @@map("artists")
 }
 
+model Album {
+  id          String   @id @default(cuid())
+  artistId    String
+  title       String
+  description String?
+  /** Cover obligatoire (upload Sharp→WebP à la création) */
+  coverUrl    String
+  /** null = non vendu en bundle ; sinon prix en euros (Decimal) */
+  price       Decimal? @db.Decimal(12, 2)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  artist    Artist          @relation(fields: [artistId], references: [id], onDelete: Cascade)
+  tracks    Track[]
+  purchases AlbumPurchase[]
+
+  @@index([artistId])
+  @@index([createdAt])
+  @@map("albums")
+}
+
 model Track {
   id             String   @id @default(cuid())
   artistId       String
+  albumId        String?
+  albumPosition  Int?
   title          String
-  genre          String?
-  priceCents     Int?
+  /** Obligatoire — enum TrackGenre (RAP, AFRO, ZOUK, SHATTA…) */
+  genre          TrackGenre
+  /** null = gratuit ; sinon prix en euros (Decimal) */
+  price          Decimal? @db.Decimal(12, 2)
   audioObjectKey String
   coverUrl       String?
   durationMs     Int?
@@ -76,6 +119,7 @@ model Track {
   updatedAt      DateTime @updatedAt
 
   artist          Artist          @relation(fields: [artistId], references: [id], onDelete: Cascade)
+  album           Album?          @relation(fields: [albumId], references: [id], onDelete: SetNull)
   playlistTracks  PlaylistTrack[]
   favorites       Favorite[]
   ratings         Rating[]
@@ -83,6 +127,8 @@ model Track {
   purchases       Purchase[]
 
   @@index([artistId])
+  @@index([albumId, albumPosition])
+  @@index([genre])
   @@index([createdAt])
   @@map("tracks")
 }
@@ -181,9 +227,10 @@ model Purchase {
   id                        String   @id @default(cuid())
   userId                    String
   trackId                   String
-  amountCents               Int
+  /** Montant payé en euros */
+  amount                    Decimal  @db.Decimal(12, 2)
   platformCommissionPercent Int
-  artistAmountCents         Int
+  artistAmount              Decimal  @db.Decimal(12, 2)
   stripePaymentId           String?  @unique
   createdAt                 DateTime @default(now())
 
@@ -193,4 +240,23 @@ model Purchase {
   @@unique([userId, trackId])
   @@index([trackId])
   @@map("purchases")
+}
+
+model AlbumPurchase {
+  id                        String   @id @default(cuid())
+  userId                    String
+  albumId                   String
+  /** Montant payé en euros */
+  amount                    Decimal  @db.Decimal(12, 2)
+  platformCommissionPercent Int
+  artistAmount              Decimal  @db.Decimal(12, 2)
+  stripePaymentId           String?  @unique
+  createdAt                 DateTime @default(now())
+
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  album Album @relation(fields: [albumId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, albumId])
+  @@index([albumId])
+  @@map("album_purchases")
 }

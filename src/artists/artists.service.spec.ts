@@ -48,6 +48,10 @@ describe('ArtistsService', () => {
 
   it('become crée le profil et passe en ARTIST', async () => {
     prisma.artist.findUnique.mockResolvedValue(null);
+    prisma.user.findUnique.mockResolvedValue({
+      id: 'u1',
+      role: UserRole.LISTENER,
+    });
     prisma.artist.create.mockResolvedValue(artist);
     prisma.user.update.mockResolvedValue({});
 
@@ -55,6 +59,20 @@ describe('ArtistsService', () => {
 
     expect(result).toEqual(artist);
     expect(prisma.$transaction).toHaveBeenCalled();
+  });
+
+  it('become ADMIN crée le profil sans changer le rôle', async () => {
+    prisma.artist.findUnique.mockResolvedValue(null);
+    prisma.user.findUnique.mockResolvedValue({
+      id: 'u1',
+      role: UserRole.ADMIN,
+    });
+    prisma.artist.create.mockResolvedValue(artist);
+
+    const result = await service.become('u1', { displayName: 'Alice' });
+
+    expect(result).toEqual(artist);
+    expect(prisma.user.update).not.toHaveBeenCalled();
   });
 
   it('become refuse un second profil', async () => {

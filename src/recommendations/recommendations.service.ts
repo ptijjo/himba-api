@@ -1,5 +1,18 @@
 import { Injectable } from '@nestjs/common';
+import { TrackGenre } from '../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+
+const trackSuggestSelect = {
+  id: true,
+  title: true,
+  genre: true,
+  price: true,
+  coverUrl: true,
+  artistId: true,
+  durationMs: true,
+  album: { select: { coverUrl: true } },
+  artist: { select: { id: true, displayName: true } },
+} as const;
 
 @Injectable()
 export class RecommendationsService {
@@ -21,12 +34,10 @@ export class RecommendationsService {
     });
 
     const artistIds = new Set<string>();
-    const genres = new Set<string>();
+    const genres = new Set<TrackGenre>();
     for (const play of recentPlays) {
       artistIds.add(play.track.artistId);
-      if (play.track.genre) {
-        genres.add(play.track.genre);
-      }
+      genres.add(play.track.genre);
     }
 
     const follows = await this.prisma.follow.findMany({
@@ -51,22 +62,15 @@ export class RecommendationsService {
     const genreList = [...genres];
 
     if (artistIdList.length === 0 && genreList.length === 0) {
-      return this.prisma.track.findMany({
+      const tracks = await this.prisma.track.findMany({
         take,
         orderBy: { createdAt: 'desc' },
-        select: {
-          id: true,
-          title: true,
-          genre: true,
-          priceCents: true,
-          coverUrl: true,
-          artistId: true,
-          durationMs: true,
-        },
+        select: trackSuggestSelect,
       });
+      return tracks.map((t) => this.toSuggestTrack(t));
     }
 
-    return this.prisma.track.findMany({
+    const tracks = await this.prisma.track.findMany({
       where: {
         AND: [
           playedTrackIds.length
@@ -82,15 +86,33 @@ export class RecommendationsService {
       },
       take,
       orderBy: { createdAt: 'desc' },
-      select: {
-        id: true,
-        title: true,
-        genre: true,
-        priceCents: true,
-        coverUrl: true,
-        artistId: true,
-        durationMs: true,
-      },
+      select: trackSuggestSelect,
     });
+    return tracks.map((t) => this.toSuggestTrack(t));
+  }
+
+  private toSuggestTrack(track: {
+    id: string;
+    title: string;
+    genre: TrackGenre;
+    price: unknown;
+    coverUrl: string | null;
+    artistId: string;
+    durationMs: number | null;
+    album: { coverUrl: string | null } | null;
+    artist: { id: string; displayName: string } | null;
+  }) {
+    return {
+      id: track.id,
+      title: track.title,
+      genre: track.genre,
+      price: track.price,
+      artistId: track.artistId,
+      durationMs: track.durationMs,
+      coverUrl: track.coverUrl ?? track.album?.coverUrl ?? null,
+      artist: track.artist
+        ? { id: track.artist.id, displayName: track.artist.displayName }
+        : undefined,
+    };
   }
 }

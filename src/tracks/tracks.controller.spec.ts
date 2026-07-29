@@ -10,6 +10,7 @@ describe('TracksController', () => {
   let controller: TracksController;
   let tracksService: {
     list: jest.Mock;
+    listGenres: jest.Mock;
     findById: jest.Mock;
     create: jest.Mock;
     update: jest.Mock;
@@ -21,6 +22,7 @@ describe('TracksController', () => {
   beforeEach(async () => {
     tracksService = {
       list: jest.fn(),
+      listGenres: jest.fn(),
       findById: jest.fn(),
       create: jest.fn(),
       update: jest.fn(),
@@ -46,10 +48,12 @@ describe('TracksController', () => {
   });
 
   it('list / findOne / download délèguent', async () => {
-    await controller.list({ limit: 10 });
+    await controller.list({ limit: 10, genre: 'AFRO' as never });
+    await controller.listGenres();
     await controller.findOne('t1');
     await controller.download('t1', mockAuthenticatedUser());
-    expect(tracksService.list).toHaveBeenCalledWith(undefined, 10);
+    expect(tracksService.list).toHaveBeenCalledWith(undefined, 10, 'AFRO');
+    expect(tracksService.listGenres).toHaveBeenCalled();
     expect(tracksService.findById).toHaveBeenCalledWith('t1');
     expect(tracksService.getDownloadUrl).toHaveBeenCalledWith('t1', 'user-1');
   });
@@ -60,7 +64,7 @@ describe('TracksController', () => {
     } as Express.Multer.File;
     await controller.create(
       mockAuthenticatedUser({ role: UserRole.ARTIST }),
-      { title: 'Song' },
+      { title: 'Song', genre: 'RAP' as never },
       { audio: [audio], cover: [] },
     );
     await controller.update(

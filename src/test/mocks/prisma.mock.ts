@@ -28,7 +28,8 @@ function modelMock(): ModelMock {
 export type MockPrismaService = {
   user: ModelMock;
   artist: ModelMock;
-  track: ModelMock;
+  album: ModelMock & { updateMany?: jest.Mock };
+  track: ModelMock & { updateMany: jest.Mock };
   playlist: ModelMock;
   playlistTrack: ModelMock;
   follow: ModelMock;
@@ -36,6 +37,7 @@ export type MockPrismaService = {
   rating: ModelMock;
   playEvent: ModelMock;
   purchase: ModelMock;
+  albumPurchase: ModelMock;
   $connect: jest.Mock;
   $disconnect: jest.Mock;
   $transaction: jest.Mock;
@@ -45,7 +47,8 @@ export function createMockPrismaService(): MockPrismaService {
   const prisma: MockPrismaService = {
     user: modelMock(),
     artist: modelMock(),
-    track: modelMock(),
+    album: { ...modelMock() },
+    track: { ...modelMock(), updateMany: jest.fn() },
     playlist: modelMock(),
     playlistTrack: modelMock(),
     follow: modelMock(),
@@ -53,6 +56,7 @@ export function createMockPrismaService(): MockPrismaService {
     rating: modelMock(),
     playEvent: modelMock(),
     purchase: modelMock(),
+    albumPurchase: modelMock(),
     $connect: jest.fn(),
     $disconnect: jest.fn(),
     $transaction: jest.fn(),

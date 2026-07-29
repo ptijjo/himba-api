@@ -44,7 +44,7 @@ describe('PaymentsService', () => {
   it('refuse intent sur titre gratuit', async () => {
     prisma.track.findUnique.mockResolvedValue({
       id: 't1',
-      priceCents: null,
+      price: null,
     });
     await expect(
       service.createTrackPaymentIntent('u1', 't1'),
@@ -54,7 +54,7 @@ describe('PaymentsService', () => {
   it('refuse intent si déjà acheté', async () => {
     prisma.track.findUnique.mockResolvedValue({
       id: 't1',
-      priceCents: 500,
+      price: 5,
     });
     prisma.purchase.findUnique.mockResolvedValue({ id: 'p1' });
     await expect(
@@ -65,7 +65,7 @@ describe('PaymentsService', () => {
   it('crée un PaymentIntent', async () => {
     prisma.track.findUnique.mockResolvedValue({
       id: 't1',
-      priceCents: 500,
+      price: 5,
     });
     prisma.purchase.findUnique.mockResolvedValue(null);
     paymentIntentsCreate.mockResolvedValue({
@@ -77,8 +77,11 @@ describe('PaymentsService', () => {
       service.createTrackPaymentIntent('u1', 't1'),
     ).resolves.toMatchObject({
       clientSecret: 'sec',
-      amountCents: 500,
+      amount: '5.00',
     });
+    expect(paymentIntentsCreate).toHaveBeenCalledWith(
+      expect.objectContaining({ amount: 500 }),
+    );
   });
 
   it('webhook crée Purchase avec commission snapshot', async () => {
@@ -91,7 +94,7 @@ describe('PaymentsService', () => {
           metadata: {
             userId: 'u1',
             trackId: 't1',
-            amountCents: '1000',
+            amount: '10.00',
           },
         },
       },
@@ -105,9 +108,7 @@ describe('PaymentsService', () => {
       data: expect.objectContaining({
         userId: 'u1',
         trackId: 't1',
-        amountCents: 1000,
         platformCommissionPercent: 10,
-        artistAmountCents: 900,
         stripePaymentId: 'pi_1',
       }),
     });
@@ -119,7 +120,7 @@ describe('PaymentsService', () => {
       data: {
         object: {
           id: 'pi_1',
-          metadata: { userId: 'u1', trackId: 't1', amountCents: '100' },
+          metadata: { userId: 'u1', trackId: 't1', amount: '1.00' },
         },
       },
     });
@@ -130,9 +131,9 @@ describe('PaymentsService', () => {
   });
 
   it('computeArtistAmount applique la commission', () => {
-    expect(service.computeArtistAmount(1000)).toEqual({
+    expect(service.computeArtistAmount(10)).toEqual({
       platformCommissionPercent: 10,
-      artistAmountCents: 900,
+      artistAmount: '9.00',
     });
   });
 
@@ -162,7 +163,7 @@ describe('PaymentsService', () => {
         object: {
           id: 'pi_3',
           amount: 100,
-          metadata: { userId: 'u1', trackId: 't1', amountCents: '100' },
+          metadata: { userId: 'u1', trackId: 't1', amount: '1.00' },
         },
       },
     });
@@ -198,5 +199,133 @@ describe('PaymentsService', () => {
     await expect(
       bare.handleWebhook(Buffer.from('{}'), 'sig'),
     ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('crée un PaymentIntent album', async () => {
+    prisma.album.findUnique.mockResolvedValue({
+      id: 'alb-1',
+      price: 19.99,
+    });
+    prisma.albumPurchase.findUnique.mockResolvedValue(null);
+    paymentIntentsCreate.mockResolvedValue({
+      id: 'pi_alb',
+      client_secret: 'sec_alb',
+    });
+
+    await expect(
+      service.createAlbumPaymentIntent('u1', 'alb-1'),
+    ).resolves.toMatchObject({
+      clientSecret: 'sec_alb',
+      amount: '19.99',
+      kind: 'album',
+    });
+  });
+
+  it('refuse intent album non vendu / déjà acheté', async () => {
+    prisma.album.findUnique.mockResolvedValue({
+      id: 'alb-1',
+      price: null,
+    });
+    await expect(
+      service.createAlbumPaymentIntent('u1', 'alb-1'),
+    ).rejects.toBeInstanceOf(BadRequestException);
+
+    prisma.album.findUnique.mockResolvedValue({
+      id: 'alb-1',
+      price: 5,
+    });
+    prisma.albumPurchase.findUnique.mockResolvedValue({ id: 'ap1' });
+    await expect(
+      service.createAlbumPaymentIntent('u1', 'alb-1'),
+    ).rejects.toBeInstanceOf(ConflictException);
+  });
+
+  it('webhook crée AlbumPurchase avec commission', async () => {
+    constructEvent.mockReturnValue({
+      type: 'payment_intent.succeeded',
+      data: {
+        object: {
+          id: 'pi_alb',
+          amount: 2000,
+          metadata: {
+            kind: 'album',
+            userId: 'u1',
+            albumId: 'alb-1',
+            amount: '20.00',
+          },
+        },
+      },
+    });
+    prisma.albumPurchase.findUnique.mockResolvedValue(null);
+    prisma.albumPurchase.create.mockResolvedValue({ id: 'ap1' });
+
+    await service.handleWebhook(Buffer.from('{}'), 'sig');
+
+    expect(prisma.albumPurchase.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        userId: 'u1',
+        albumId: 'alb-1',
+        platformCommissionPercent: 10,
+        stripePaymentId: 'pi_alb',
+      }),
+    });
+  });
+
+  it('webhook album idempotent + album introuvable + metadata albumId manquant', async () => {
+    prisma.album.findUnique.mockResolvedValue(null);
+    await expect(
+      service.createAlbumPaymentIntent('u1', 'missing'),
+    ).rejects.toBeInstanceOf(NotFoundException);
+
+    constructEvent.mockReturnValueOnce({
+      type: 'payment_intent.succeeded',
+      data: {
+        object: {
+          id: 'pi_x',
+          metadata: { kind: 'album', userId: 'u1', amount: '1.00' },
+        },
+      },
+    });
+    await expect(
+      service.handleWebhook(Buffer.from('{}'), 'sig'),
+    ).rejects.toBeInstanceOf(BadRequestException);
+
+    constructEvent.mockReturnValueOnce({
+      type: 'payment_intent.succeeded',
+      data: {
+        object: {
+          id: 'pi_y',
+          metadata: {
+            kind: 'album',
+            userId: 'u1',
+            albumId: 'alb-1',
+            amount: '1.00',
+          },
+        },
+      },
+    });
+    prisma.albumPurchase.findUnique.mockResolvedValueOnce({ id: 'existing' });
+    await service.handleWebhook(Buffer.from('{}'), 'sig');
+    expect(prisma.albumPurchase.create).not.toHaveBeenCalled();
+
+    constructEvent.mockReturnValueOnce({
+      type: 'payment_intent.succeeded',
+      data: {
+        object: {
+          id: 'pi_z',
+          metadata: {
+            kind: 'album',
+            userId: 'u1',
+            albumId: 'alb-1',
+            amount: '1.00',
+          },
+        },
+      },
+    });
+    prisma.albumPurchase.findUnique
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ id: 'owned' });
+    await service.handleWebhook(Buffer.from('{}'), 'sig');
+    expect(prisma.albumPurchase.create).not.toHaveBeenCalled();
   });
 });

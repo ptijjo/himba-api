@@ -28,6 +28,12 @@ export class ArtistsController {
     return this.artistsService.become(user.id, dto);
   }
 
+  /** Profil artiste du user connecté (null si pas encore artiste). */
+  @Get('me')
+  me(@CurrentUser() user: AuthenticatedUser) {
+    return this.artistsService.findByUserId(user.id);
+  }
+
   @Get(':id')
   findOne(@Param('id') id: string) {
     return this.artistsService.findById(id);
