@@ -34,7 +34,12 @@ export class TracksController {
 
   @Get()
   list(@Query() query: ListTracksQueryDto) {
-    return this.tracksService.list(query.cursor, query.limit, query.genre);
+    return this.tracksService.list(
+      query.cursor,
+      query.limit,
+      query.genre,
+      query.artistId,
+    );
   }
 
   @Get(':id')

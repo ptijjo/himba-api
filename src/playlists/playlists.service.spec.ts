@@ -23,6 +23,37 @@ describe('PlaylistsService', () => {
     service = module.get(PlaylistsService);
   });
 
+  it('listPublicByUser liste les playlists sans PII', async () => {
+    prisma.user.findUnique.mockResolvedValue({
+      id: 'u1',
+      status: 'ACTIVE',
+    });
+    prisma.playlist.findMany.mockResolvedValue([
+      {
+        id: 'p1',
+        name: 'Mix',
+        createdAt: new Date('2026-01-01'),
+        _count: { tracks: 3 },
+      },
+    ]);
+
+    await expect(service.listPublicByUser('u1')).resolves.toEqual([
+      {
+        id: 'p1',
+        name: 'Mix',
+        createdAt: new Date('2026-01-01'),
+        trackCount: 3,
+      },
+    ]);
+  });
+
+  it('listPublicByUser refuse user absent / ban', async () => {
+    prisma.user.findUnique.mockResolvedValue(null);
+    await expect(service.listPublicByUser('x')).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
+  });
+
   it('create playlist', async () => {
     prisma.playlist.create.mockResolvedValue({
       id: 'p1',
@@ -67,14 +98,18 @@ describe('PlaylistsService', () => {
   });
 
   it('listMine / get / update / remove / removeTrack', async () => {
-    prisma.playlist.findMany.mockResolvedValue([{ id: 'p1', userId: 'u1' }]);
+    prisma.playlist.findMany.mockResolvedValue([
+      { id: 'p1', userId: 'u1', _count: { tracks: 2 } },
+    ]);
     prisma.playlist.findUnique.mockResolvedValue({ id: 'p1', userId: 'u1' });
     prisma.playlistTrack.findMany.mockResolvedValue([]);
     prisma.playlist.update.mockResolvedValue({ id: 'p1', name: 'N' });
     prisma.playlist.delete.mockResolvedValue({});
     prisma.playlistTrack.delete.mockResolvedValue({});
 
-    await service.listMine('u1');
+    await expect(service.listMine('u1')).resolves.toMatchObject({
+      items: [{ id: 'p1', trackCount: 2 }],
+    });
     await service.get('u1', 'p1');
     await service.update('u1', 'p1', { name: 'N' });
     await service.remove('u1', 'p1');
@@ -100,9 +135,9 @@ describe('PlaylistsService', () => {
     ).rejects.toBeInstanceOf(NotFoundException);
 
     prisma.playlist.findMany.mockResolvedValue([
-      { id: '1' },
-      { id: '2' },
-      { id: '3' },
+      { id: '1', _count: { tracks: 0 } },
+      { id: '2', _count: { tracks: 0 } },
+      { id: '3', _count: { tracks: 0 } },
     ]);
     const page = await service.listMine('u1', 'cur', 2);
     expect(page.items).toHaveLength(2);

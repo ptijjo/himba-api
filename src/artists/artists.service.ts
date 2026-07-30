@@ -56,16 +56,36 @@ export class ArtistsService {
     return artist;
   }
 
-  async findById(id: string): Promise<Artist> {
-    const artist = await this.prisma.artist.findUnique({ where: { id } });
+  async findById(id: string) {
+    const artist = await this.prisma.artist.findUnique({
+      where: { id },
+      include: { user: { select: { avatarUrl: true } } },
+    });
     if (!artist) {
       throw new NotFoundException('Artiste introuvable');
     }
-    return artist;
+    const { user, ...rest } = artist;
+    return {
+      ...rest,
+      coverUrl: this.storage.resolvePublicUrl(rest.coverUrl),
+      avatarUrl: this.storage.resolvePublicUrl(user.avatarUrl),
+    };
   }
 
-  async findByUserId(userId: string): Promise<Artist | null> {
-    return this.prisma.artist.findUnique({ where: { userId } });
+  async findByUserId(userId: string) {
+    const artist = await this.prisma.artist.findUnique({
+      where: { userId },
+      include: { user: { select: { avatarUrl: true } } },
+    });
+    if (!artist) {
+      return null;
+    }
+    const { user, ...rest } = artist;
+    return {
+      ...rest,
+      coverUrl: this.storage.resolvePublicUrl(rest.coverUrl),
+      avatarUrl: this.storage.resolvePublicUrl(user.avatarUrl),
+    };
   }
 
   async update(
@@ -73,7 +93,7 @@ export class ArtistsService {
     actor: { id: string; role: UserRole },
     dto: UpdateArtistDto,
     cover?: Express.Multer.File,
-  ): Promise<Artist> {
+  ) {
     const artist = await this.findById(artistId);
     this.assertOwnerOrAdmin(artist, actor);
 
@@ -100,11 +120,11 @@ export class ArtistsService {
     return this.prisma.artist.update({
       where: { id: artistId },
       data,
-    });
+    }).then(() => this.findById(artistId));
   }
 
   assertOwnerOrAdmin(
-    artist: Artist,
+    artist: { userId: string },
     actor: { id: string; role: UserRole },
   ): void {
     if (actor.role === UserRole.ADMIN) {

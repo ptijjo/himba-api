@@ -120,10 +120,22 @@ export class TracksService {
     return this.toPublicTrack(created);
   }
 
-  async list(cursor?: string, limit?: number, genre?: TrackGenre) {
+  async list(
+    cursor?: string,
+    limit?: number,
+    genre?: TrackGenre,
+    artistId?: string,
+  ) {
     const take = parseLimit(limit);
+    const where: Prisma.TrackWhereInput = {};
+    if (genre) {
+      where.genre = genre;
+    }
+    if (artistId) {
+      where.artistId = artistId;
+    }
     const tracks = await this.prisma.track.findMany({
-      where: genre ? { genre } : undefined,
+      where: Object.keys(where).length > 0 ? where : undefined,
       take: take + 1,
       ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
       orderBy: { createdAt: 'desc' },

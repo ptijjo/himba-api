@@ -27,13 +27,48 @@ export class PlaylistsService {
       take: take + 1,
       ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
       orderBy: { createdAt: 'desc' },
+      include: { _count: { select: { tracks: true } } },
     });
     const hasMore = items.length > take;
     const page = hasMore ? items.slice(0, take) : items;
     return {
-      items: page,
+      items: page.map(({ _count, ...playlist }) => ({
+        ...playlist,
+        trackCount: _count.tracks,
+      })),
       nextCursor: hasMore ? page[page.length - 1]?.id ?? null : null,
     };
+  }
+
+  /**
+   * Playlists d’un autre utilisateur pour profil public.
+   * 1. Vérifier que le compte existe et n’est pas ban
+   * 2. Renvoyer nom + nombre de titres uniquement (pas d’email)
+   */
+  async listPublicByUser(userId: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, status: true },
+    });
+    if (!user || user.status === 'BANNED') {
+      throw new NotFoundException('Utilisateur introuvable');
+    }
+    const items = await this.prisma.playlist.findMany({
+      where: { userId },
+      select: {
+        id: true,
+        name: true,
+        createdAt: true,
+        _count: { select: { tracks: true } },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+    return items.map((p) => ({
+      id: p.id,
+      name: p.name,
+      createdAt: p.createdAt,
+      trackCount: p._count.tracks,
+    }));
   }
 
   async get(userId: string, playlistId: string) {

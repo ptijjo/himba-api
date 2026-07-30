@@ -1,4 +1,4 @@
-import { IsEnum, IsOptional } from 'class-validator';
+import { IsEnum, IsOptional, IsString } from 'class-validator';
 import { TrackGenre } from '../../generated/prisma/client';
 import { CursorPaginationQueryDto } from '../../common/pagination/cursor.dto';
 
@@ -8,4 +8,9 @@ export class ListTracksQueryDto extends CursorPaginationQueryDto {
     message: `genre doit être l’un de : ${Object.values(TrackGenre).join(', ')}`,
   })
   genre?: TrackGenre;
+
+  /** Filtre discographie — profil artiste. */
+  @IsOptional()
+  @IsString()
+  artistId?: string;
 }

@@ -192,11 +192,15 @@ describe('TracksService', () => {
     expect(page.items[0]).not.toHaveProperty('audioObjectKey');
   });
 
-  it('list filtre par genre + listGenres', async () => {
+  it('list filtre par genre + artistId + listGenres', async () => {
     prisma.track.findMany.mockResolvedValue([]);
     await service.list(undefined, 20, 'SHATTA');
     expect(prisma.track.findMany).toHaveBeenCalledWith(
       expect.objectContaining({ where: { genre: 'SHATTA' } }),
+    );
+    await service.list(undefined, 20, undefined, 'artist-1');
+    expect(prisma.track.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { artistId: 'artist-1' } }),
     );
     expect(service.listGenres()).toEqual(
       expect.arrayContaining([

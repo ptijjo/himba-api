@@ -125,6 +125,30 @@ export class StorageService {
     });
   }
 
+  /**
+   * Convertit une clé stockée (`https://…` ou `r2://objectKey`) en URL publique chargeable.
+   * Les `r2://` ne sont pas affichables par expo-image.
+   */
+  resolvePublicUrl(stored: string | null | undefined): string | null {
+    if (!stored) {
+      return null;
+    }
+    const trimmed = stored.trim();
+    if (
+      trimmed.startsWith('https://') ||
+      trimmed.startsWith('http://')
+    ) {
+      return trimmed;
+    }
+    if (!this.publicBaseUrl) {
+      return null;
+    }
+    if (trimmed.startsWith('r2://')) {
+      return `${this.publicBaseUrl}/${trimmed.slice(5)}`;
+    }
+    return `${this.publicBaseUrl}/${trimmed.replace(/^\//, '')}`;
+  }
+
   private assertImage(file: Express.Multer.File): void {
     if (!file?.buffer?.length) {
       throw new BadRequestException('Fichier image requis');

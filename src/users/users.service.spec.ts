@@ -117,6 +117,48 @@ describe('UsersService', () => {
     });
   });
 
+  it('getPublicProfile n’expose pas email ni passwordHash', async () => {
+    prisma.user.findUnique.mockResolvedValue({
+      id: 'u1',
+      username: 'alice',
+      bio: 'hello',
+      avatarUrl: 'https://cdn.example/a.jpg',
+      status: UserStatus.ACTIVE,
+      artist: { id: 'a1' },
+    });
+
+    const profile = await service.getPublicProfile('u1');
+
+    expect(profile).toEqual({
+      id: 'u1',
+      username: 'alice',
+      bio: 'hello',
+      avatarUrl: 'https://cdn.example/a.jpg',
+      artistId: 'a1',
+    });
+    expect(profile).not.toHaveProperty('email');
+    expect(profile).not.toHaveProperty('passwordHash');
+  });
+
+  it('getPublicProfile refuse utilisateur ban ou absent', async () => {
+    prisma.user.findUnique.mockResolvedValue(null);
+    await expect(service.getPublicProfile('x')).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
+
+    prisma.user.findUnique.mockResolvedValue({
+      id: 'u1',
+      username: 'alice',
+      bio: null,
+      avatarUrl: null,
+      status: UserStatus.BANNED,
+      artist: null,
+    });
+    await expect(service.getPublicProfile('u1')).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
+  });
+
   it('getMe introuvable + setRole + username conflict + avatar fallback', async () => {
     prisma.user.findUnique.mockResolvedValue(null);
     await expect(service.getMe('missing')).rejects.toBeInstanceOf(

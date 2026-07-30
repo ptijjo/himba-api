@@ -5,6 +5,10 @@ import {
   mockPrismaServiceProvider,
   MockPrismaService,
 } from '../test/mocks/prisma.mock';
+import {
+  createMockStorageService,
+  mockStorageServiceProvider,
+} from '../test/mocks/storage.mock';
 import { LibraryService } from './library.service';
 
 describe('LibraryService', () => {
@@ -14,7 +18,11 @@ describe('LibraryService', () => {
   beforeEach(async () => {
     prisma = createMockPrismaService();
     const module: TestingModule = await Test.createTestingModule({
-      providers: [LibraryService, mockPrismaServiceProvider(prisma)],
+      providers: [
+        LibraryService,
+        mockPrismaServiceProvider(prisma),
+        mockStorageServiceProvider(createMockStorageService()),
+      ],
     }).compile();
     service = module.get(LibraryService);
   });

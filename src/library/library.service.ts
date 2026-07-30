@@ -4,10 +4,14 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { StorageService } from '../storage/storage.service';
 
 @Injectable()
 export class LibraryService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly storage: StorageService,
+  ) {}
 
   async follow(userId: string, artistId: string) {
     const artist = await this.prisma.artist.findUnique({
@@ -34,15 +38,39 @@ export class LibraryService {
   }
 
   listFollowing(userId: string) {
-    return this.prisma.follow.findMany({
-      where: { followerId: userId },
-      include: {
-        artist: {
-          select: { id: true, displayName: true, coverUrl: true },
+    // Photo de profil = User.avatarUrl (pas cover album / titre / artiste)
+    return this.prisma.follow
+      .findMany({
+        where: { followerId: userId },
+        include: {
+          artist: {
+            select: {
+              id: true,
+              displayName: true,
+              coverUrl: true,
+              user: { select: { avatarUrl: true } },
+            },
+          },
         },
-      },
-      orderBy: { createdAt: 'desc' },
-    });
+        orderBy: { createdAt: 'desc' },
+      })
+      .then((items) =>
+        items.map((follow) => ({
+          ...follow,
+          artist: follow.artist
+            ? {
+                id: follow.artist.id,
+                displayName: follow.artist.displayName,
+                coverUrl: this.storage.resolvePublicUrl(
+                  follow.artist.coverUrl,
+                ),
+                avatarUrl: this.storage.resolvePublicUrl(
+                  follow.artist.user.avatarUrl,
+                ),
+              }
+            : undefined,
+        })),
+      );
   }
 
   async favorite(userId: string, trackId: string) {

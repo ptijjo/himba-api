@@ -32,6 +32,11 @@ describe('ArtistsService', () => {
     updatedAt: new Date(),
   };
 
+  const artistRow = {
+    ...artist,
+    user: { avatarUrl: null as string | null },
+  };
+
   beforeEach(async () => {
     prisma = createMockPrismaService();
     storage = createMockStorageService();
@@ -84,7 +89,7 @@ describe('ArtistsService', () => {
   });
 
   it('update refuse un non-propriétaire', async () => {
-    prisma.artist.findUnique.mockResolvedValue(artist);
+    prisma.artist.findUnique.mockResolvedValue(artistRow);
 
     await expect(
       service.update(
@@ -96,12 +101,15 @@ describe('ArtistsService', () => {
   });
 
   it('update autorise ADMIN', async () => {
-    prisma.artist.findUnique.mockResolvedValue(artist);
+    prisma.artist.findUnique.mockResolvedValue({
+      ...artistRow,
+      bio: 'ok',
+    });
     prisma.artist.update.mockResolvedValue({ ...artist, bio: 'ok' });
 
     await expect(
       service.update('a1', { id: 'admin', role: UserRole.ADMIN }, { bio: 'ok' }),
-    ).resolves.toMatchObject({ bio: 'ok' });
+    ).resolves.toMatchObject({ bio: 'ok', avatarUrl: null });
   });
 
   it('findById introuvable + update cover fallback r2', async () => {
@@ -110,7 +118,11 @@ describe('ArtistsService', () => {
       NotFoundException,
     );
 
-    prisma.artist.findUnique.mockResolvedValue(artist);
+    prisma.artist.findUnique.mockResolvedValue({
+      ...artistRow,
+      coverUrl: 'r2://artists/a1/x.webp',
+      displayName: 'Alice B',
+    });
     storage.uploadImage.mockResolvedValue({
       objectKey: 'artists/a1/x.webp',
       publicUrl: null,
@@ -135,6 +147,9 @@ describe('ArtistsService', () => {
       ),
     ).resolves.toMatchObject({ coverUrl: 'r2://artists/a1/x.webp' });
 
-    await expect(service.findByUserId('u1')).resolves.toEqual(artist);
+    await expect(service.findByUserId('u1')).resolves.toMatchObject({
+      id: 'a1',
+      avatarUrl: null,
+    });
   });
 });

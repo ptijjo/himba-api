@@ -52,7 +52,12 @@ describe('TracksController', () => {
     await controller.listGenres();
     await controller.findOne('t1');
     await controller.download('t1', mockAuthenticatedUser());
-    expect(tracksService.list).toHaveBeenCalledWith(undefined, 10, 'AFRO');
+    expect(tracksService.list).toHaveBeenCalledWith(
+      undefined,
+      10,
+      'AFRO',
+      undefined,
+    );
     expect(tracksService.listGenres).toHaveBeenCalled();
     expect(tracksService.findById).toHaveBeenCalledWith('t1');
     expect(tracksService.getDownloadUrl).toHaveBeenCalledWith('t1', 'user-1');

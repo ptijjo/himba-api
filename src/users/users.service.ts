@@ -10,6 +10,15 @@ import { UpdateProfileDto } from './dto/update-profile.dto';
 
 export type PublicUser = Omit<User, 'passwordHash'>;
 
+/** Profil visible par un autre compte — jamais email / hash / status. */
+export type UserPublicProfile = {
+  id: string;
+  username: string;
+  bio: string | null;
+  avatarUrl: string | null;
+  artistId: string | null;
+};
+
 @Injectable()
 export class UsersService {
   constructor(
@@ -51,6 +60,35 @@ export class UsersService {
     return this.toPublic(user);
   }
 
+  /**
+   * Profil public d’un autre utilisateur (auth requise au niveau guard).
+   * 1. Charger username / bio / avatar / artistId uniquement
+   * 2. Masquer les comptes BANNED (404)
+   */
+  async getPublicProfile(userId: string): Promise<UserPublicProfile> {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        username: true,
+        bio: true,
+        avatarUrl: true,
+        status: true,
+        artist: { select: { id: true } },
+      },
+    });
+    if (!user || user.status === 'BANNED') {
+      throw new NotFoundException('Utilisateur introuvable');
+    }
+    return {
+      id: user.id,
+      username: user.username,
+      bio: user.bio,
+      avatarUrl: this.storage.resolvePublicUrl(user.avatarUrl),
+      artistId: user.artist?.id ?? null,
+    };
+  }
+
   async updateMe(
     userId: string,
     dto: UpdateProfileDto,
@@ -85,8 +123,11 @@ export class UsersService {
   }
 
   toPublic(user: User): PublicUser {
-    const { passwordHash: _passwordHash, ...rest } = user;
-    return rest;
+    const { passwordHash: _passwordHash, avatarUrl, ...rest } = user;
+    return {
+      ...rest,
+      avatarUrl: this.storage.resolvePublicUrl(avatarUrl),
+    };
   }
 
   async assertUsernameAvailable(username: string): Promise<void> {

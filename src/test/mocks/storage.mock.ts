@@ -5,6 +5,7 @@ export type MockStorageService = {
   uploadImage: jest.Mock;
   uploadAudio: jest.Mock;
   getSignedUrl: jest.Mock;
+  resolvePublicUrl: jest.Mock;
 };
 
 export function createMockStorageService(): MockStorageService {
@@ -17,6 +18,7 @@ export function createMockStorageService(): MockStorageService {
     getSignedUrl: jest
       .fn()
       .mockResolvedValue('https://signed.example/audio.m4a'),
+    resolvePublicUrl: jest.fn((url: string | null | undefined) => url ?? null),
   };
 }
 
