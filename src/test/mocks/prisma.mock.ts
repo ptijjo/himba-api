@@ -38,6 +38,8 @@ export type MockPrismaService = {
   playEvent: ModelMock;
   purchase: ModelMock;
   albumPurchase: ModelMock;
+  devicePushToken: ModelMock & { createMany?: jest.Mock; deleteMany: jest.Mock };
+  notification: ModelMock & { createMany: jest.Mock; updateMany: jest.Mock };
   $connect: jest.Mock;
   $disconnect: jest.Mock;
   $transaction: jest.Mock;
@@ -57,6 +59,12 @@ export function createMockPrismaService(): MockPrismaService {
     playEvent: modelMock(),
     purchase: modelMock(),
     albumPurchase: modelMock(),
+    devicePushToken: { ...modelMock(), deleteMany: jest.fn() },
+    notification: {
+      ...modelMock(),
+      createMany: jest.fn(),
+      updateMany: jest.fn(),
+    },
     $connect: jest.fn(),
     $disconnect: jest.fn(),
     $transaction: jest.fn(),

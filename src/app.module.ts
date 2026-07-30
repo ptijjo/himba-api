@@ -10,6 +10,7 @@ import { AuthModule } from './auth/auth.module';
 import { JwtAuthGuardGlobal } from './auth/guards/jwt-auth.guard.global';
 import { RolesGuard } from './auth/guards/roles.guard';
 import { LibraryModule } from './library/library.module';
+import { NotificationsModule } from './notifications/notifications.module';
 import { PaymentsModule } from './payments/payments.module';
 import { PlaylistsModule } from './playlists/playlists.module';
 import { PlaysModule } from './plays/plays.module';
@@ -53,6 +54,7 @@ import { UsersModule } from './users/users.module';
     PlaysModule,
     RecommendationsModule,
     PaymentsModule,
+    NotificationsModule,
   ],
   controllers: [AppController],
   providers: [

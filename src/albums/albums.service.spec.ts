@@ -6,6 +6,7 @@ import {
 import { Test, TestingModule } from '@nestjs/testing';
 import { UserRole } from '../generated/prisma/client';
 import { ArtistsService } from '../artists/artists.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import { mockConfigServiceProvider } from '../test/mocks/config.mock';
 import {
   createMockPrismaService,
@@ -61,6 +62,10 @@ describe('AlbumsService', () => {
         mockStorageServiceProvider(storage),
         mockConfigServiceProvider(),
         { provide: ArtistsService, useValue: artistsService },
+        {
+          provide: NotificationsService,
+          useValue: { notifyArtistFollowers: jest.fn() },
+        },
       ],
     }).compile();
     service = module.get(AlbumsService);

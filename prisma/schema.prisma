@@ -21,6 +21,11 @@ enum UserStatus {
   BANNED
 }
 
+enum NotificationType {
+  TRACK_RELEASE
+  ALBUM_RELEASE
+}
+
 /// Genres catalogue — ajouter une valeur = migration Prisma.
 enum TrackGenre {
   RAP
@@ -57,6 +62,8 @@ model User {
   playEvents     PlayEvent[]
   purchases      Purchase[]
   albumPurchases AlbumPurchase[]
+  pushTokens     DevicePushToken[]
+  notifications  Notification[]
 
   @@index([email])
   @@index([username])
@@ -259,4 +266,38 @@ model AlbumPurchase {
   @@unique([userId, albumId])
   @@index([albumId])
   @@map("album_purchases")
+}
+
+/** Token Expo Push — un appareil = un token (upsert par token). */
+model DevicePushToken {
+  id        String   @id @default(cuid())
+  userId    String
+  /** ExponentPushToken[…] */
+  token     String   @unique
+  platform  String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("device_push_tokens")
+}
+
+/** Fil d’alertes in-app + miroir des push sorties. */
+model Notification {
+  id        String           @id @default(cuid())
+  userId    String
+  type      NotificationType
+  title     String
+  body      String
+  /** artistId, trackId?, albumId? */
+  data      Json
+  readAt    DateTime?
+  createdAt DateTime         @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@map("notifications")
 }

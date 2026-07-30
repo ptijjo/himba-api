@@ -6,6 +6,7 @@ import {
 import { Test, TestingModule } from '@nestjs/testing';
 import { UserRole } from '../generated/prisma/client';
 import { ArtistsService } from '../artists/artists.service';
+import { NotificationsService } from '../notifications/notifications.service';
 import { mockConfigServiceProvider } from '../test/mocks/config.mock';
 import {
   createMockPrismaService,
@@ -69,6 +70,10 @@ describe('TracksService', () => {
         mockStorageServiceProvider(storage),
         mockConfigServiceProvider(),
         { provide: ArtistsService, useValue: artistsService },
+        {
+          provide: NotificationsService,
+          useValue: { notifyArtistFollowers: jest.fn() },
+        },
       ],
     }).compile();
     service = module.get(TracksService);
@@ -138,12 +143,21 @@ describe('TracksService', () => {
   });
 
   it('create titre gratuit OK', async () => {
-    prisma.track.create.mockResolvedValue(freeTrack);
+    prisma.track.create.mockResolvedValue({
+      ...freeTrack,
+      coverUrl: 'https://cdn.himba.test/covers/x.webp',
+    });
     const audio = {
       buffer: Buffer.from('a'),
       mimetype: 'audio/mp4',
       originalname: 'a.m4a',
       size: 1,
+    } as Express.Multer.File;
+    const cover = {
+      buffer: Buffer.from('img'),
+      mimetype: 'image/jpeg',
+      originalname: 'c.jpg',
+      size: 10,
     } as Express.Multer.File;
 
     await expect(
@@ -151,6 +165,7 @@ describe('TracksService', () => {
         { id: 'user-1', role: UserRole.ARTIST },
         { title: 'Free', genre: 'AFRO', price: null },
         audio,
+        cover,
       ),
     ).resolves.toMatchObject({ title: 'Free', price: null });
 
@@ -158,8 +173,25 @@ describe('TracksService', () => {
       { id: 'user-1', role: UserRole.ARTIST },
       { title: 'Free', genre: 'AFRO', price: null },
       audio,
+      cover,
     );
     expect(created).not.toHaveProperty('audioObjectKey');
+  });
+
+  it('create single sans cover → 400', async () => {
+    await expect(
+      service.create(
+        { id: 'user-1', role: UserRole.ARTIST },
+        { title: 'Single', genre: 'RAP' },
+        {
+          buffer: Buffer.from('a'),
+          mimetype: 'audio/mp4',
+          originalname: 'a.m4a',
+          size: 1,
+        } as Express.Multer.File,
+      ),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(storage.uploadAudio).not.toHaveBeenCalled();
   });
 
   it('update / remove propriétaire OK', async () => {

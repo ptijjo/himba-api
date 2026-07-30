@@ -5,10 +5,11 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { Album, UserRole, Prisma } from '../generated/prisma/client';
+import { Album, NotificationType, UserRole, Prisma } from '../generated/prisma/client';
 import { ArtistsService } from '../artists/artists.service';
 import { assertMoneyInRange, money } from '../common/money/money';
 import { parseLimit } from '../common/pagination/cursor.dto';
+import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { StorageService } from '../storage/storage.service';
 import {
@@ -30,6 +31,7 @@ export class AlbumsService {
     private readonly storage: StorageService,
     private readonly artistsService: ArtistsService,
     private readonly configService: ConfigService,
+    private readonly notificationsService: NotificationsService,
   ) {
     this.tracksMax = Number(
       this.configService.get<string | number>('ALBUM_TRACKS_MAX', 100),
@@ -60,7 +62,7 @@ export class AlbumsService {
     );
     const coverUrl = uploaded.publicUrl ?? `r2://${uploaded.objectKey}`;
 
-    return this.prisma.album.create({
+    const album = await this.prisma.album.create({
       data: {
         artistId: artist.id,
         title: dto.title.trim(),
@@ -69,6 +71,13 @@ export class AlbumsService {
         coverUrl,
       },
     });
+    void this.notificationsService.notifyArtistFollowers(artist.id, {
+      type: NotificationType.ALBUM_RELEASE,
+      title: artist.displayName,
+      body: `Nouvel album : « ${album.title} »`,
+      data: { artistId: artist.id, albumId: album.id },
+    });
+    return album;
   }
 
   async list(artistId?: string, cursor?: string, limit?: number) {

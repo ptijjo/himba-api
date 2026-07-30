@@ -5,10 +5,11 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { Track, TrackGenre, UserRole, Prisma } from '../generated/prisma/client';
+import { Track, TrackGenre, UserRole, Prisma, NotificationType } from '../generated/prisma/client';
 import { ArtistsService } from '../artists/artists.service';
 import { assertMoneyInRange, money } from '../common/money/money';
 import { parseLimit } from '../common/pagination/cursor.dto';
+import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { StorageService } from '../storage/storage.service';
 import { CreateTrackDto } from './dto/create-track.dto';
@@ -38,6 +39,7 @@ export class TracksService {
     private readonly storage: StorageService,
     private readonly artistsService: ArtistsService,
     private readonly configService: ConfigService,
+    private readonly notificationsService: NotificationsService,
   ) {
     this.priceMin = money(
       this.configService.getOrThrow<string | number>('TRACK_PRICE_MIN'),
@@ -57,6 +59,12 @@ export class TracksService {
     this.assertPrice(dto.price);
     if (!audio) {
       throw new BadRequestException('Fichier audio M4A / AAC / MP3 requis');
+    }
+    // Single (hors album) : cover obligatoire — sinon héritage cover album
+    if (!dto.albumId && !cover?.buffer?.length) {
+      throw new BadRequestException(
+        'Cover requise pour un single (hors album)',
+      );
     }
 
     const uploadedAudio = await this.storage.uploadAudio(
@@ -117,7 +125,19 @@ export class TracksService {
       },
       include: trackPublicInclude,
     });
-    return this.toPublicTrack(created);
+    const publicTrack = this.toPublicTrack(created);
+    // Notifier les followers (async — ne bloque pas la réponse)
+    void this.notificationsService.notifyArtistFollowers(artist.id, {
+      type: NotificationType.TRACK_RELEASE,
+      title: artist.displayName,
+      body: `Nouveau titre : « ${publicTrack.title} »`,
+      data: {
+        artistId: artist.id,
+        trackId: publicTrack.id,
+        ...(publicTrack.albumId ? { albumId: publicTrack.albumId } : {}),
+      },
+    });
+    return publicTrack;
   }
 
   async list(
