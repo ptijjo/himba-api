@@ -59,16 +59,25 @@ export class ArtistsService {
   async findById(id: string) {
     const artist = await this.prisma.artist.findUnique({
       where: { id },
-      include: { user: { select: { avatarUrl: true } } },
+      include: {
+        user: { select: { avatarUrl: true } },
+        _count: { select: { follows: true } },
+      },
     });
     if (!artist) {
       throw new NotFoundException('Artiste introuvable');
     }
-    const { user, ...rest } = artist;
+    // Abonnements = artistes suivis par le compte User lié
+    const followingCount = await this.prisma.follow.count({
+      where: { followerId: artist.userId },
+    });
+    const { user, _count, ...rest } = artist;
     return {
       ...rest,
       coverUrl: this.storage.resolvePublicUrl(rest.coverUrl),
       avatarUrl: this.storage.resolvePublicUrl(user.avatarUrl),
+      followersCount: _count.follows,
+      followingCount,
     };
   }
 

@@ -9,6 +9,10 @@ import {
   mockPrismaServiceProvider,
   MockPrismaService,
 } from '../test/mocks/prisma.mock';
+import {
+  createMockStorageService,
+  mockStorageServiceProvider,
+} from '../test/mocks/storage.mock';
 import { PlaylistsService } from './playlists.service';
 
 describe('PlaylistsService', () => {
@@ -18,7 +22,11 @@ describe('PlaylistsService', () => {
   beforeEach(async () => {
     prisma = createMockPrismaService();
     const module: TestingModule = await Test.createTestingModule({
-      providers: [PlaylistsService, mockPrismaServiceProvider(prisma)],
+      providers: [
+        PlaylistsService,
+        mockPrismaServiceProvider(prisma),
+        mockStorageServiceProvider(createMockStorageService()),
+      ],
     }).compile();
     service = module.get(PlaylistsService);
   });
@@ -99,7 +107,7 @@ describe('PlaylistsService', () => {
 
   it('listMine / get / update / remove / removeTrack', async () => {
     prisma.playlist.findMany.mockResolvedValue([
-      { id: 'p1', userId: 'u1', _count: { tracks: 2 } },
+      { id: 'p1', userId: 'u1', _count: { tracks: 2 }, tracks: [] },
     ]);
     prisma.playlist.findUnique.mockResolvedValue({ id: 'p1', userId: 'u1' });
     prisma.playlistTrack.findMany.mockResolvedValue([]);
@@ -108,7 +116,7 @@ describe('PlaylistsService', () => {
     prisma.playlistTrack.delete.mockResolvedValue({});
 
     await expect(service.listMine('u1')).resolves.toMatchObject({
-      items: [{ id: 'p1', trackCount: 2 }],
+      items: [{ id: 'p1', trackCount: 2, coverUrls: [] }],
     });
     await service.get('u1', 'p1');
     await service.update('u1', 'p1', { name: 'N' });
@@ -135,9 +143,9 @@ describe('PlaylistsService', () => {
     ).rejects.toBeInstanceOf(NotFoundException);
 
     prisma.playlist.findMany.mockResolvedValue([
-      { id: '1', _count: { tracks: 0 } },
-      { id: '2', _count: { tracks: 0 } },
-      { id: '3', _count: { tracks: 0 } },
+      { id: '1', _count: { tracks: 0 }, tracks: [] },
+      { id: '2', _count: { tracks: 0 }, tracks: [] },
+      { id: '3', _count: { tracks: 0 }, tracks: [] },
     ]);
     const page = await service.listMine('u1', 'cur', 2);
     expect(page.items).toHaveLength(2);

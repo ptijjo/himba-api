@@ -125,6 +125,8 @@ export class NotificationsService {
       title: payload.title,
       body: payload.body,
       data: payload.data,
+      channelId: 'sorties',
+      priority: 'high' as const,
     }));
 
     try {
@@ -145,6 +147,8 @@ export class NotificationsService {
       title: string;
       body: string;
       data: ReleaseNotifyPayload['data'];
+      channelId: string;
+      priority: 'high';
     }>,
   ): Promise<void> {
     for (let i = 0; i < messages.length; i += PUSH_CHUNK) {

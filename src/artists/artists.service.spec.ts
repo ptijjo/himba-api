@@ -35,11 +35,13 @@ describe('ArtistsService', () => {
   const artistRow = {
     ...artist,
     user: { avatarUrl: null as string | null },
+    _count: { follows: 0 },
   };
 
   beforeEach(async () => {
     prisma = createMockPrismaService();
     storage = createMockStorageService();
+    prisma.follow.count.mockResolvedValue(0);
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         ArtistsService,

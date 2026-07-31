@@ -34,6 +34,7 @@ export type MockPrismaService = {
   playlistTrack: ModelMock;
   follow: ModelMock;
   favorite: ModelMock;
+  albumFavorite: ModelMock;
   rating: ModelMock;
   playEvent: ModelMock;
   purchase: ModelMock;
@@ -55,6 +56,7 @@ export function createMockPrismaService(): MockPrismaService {
     playlistTrack: modelMock(),
     follow: modelMock(),
     favorite: modelMock(),
+    albumFavorite: modelMock(),
     rating: modelMock(),
     playEvent: modelMock(),
     purchase: modelMock(),

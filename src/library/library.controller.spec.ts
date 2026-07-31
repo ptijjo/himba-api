@@ -14,6 +14,9 @@ describe('LibraryController', () => {
     favorite: jest.fn(),
     unfavorite: jest.fn(),
     listFavorites: jest.fn(),
+    favoriteAlbum: jest.fn(),
+    unfavoriteAlbum: jest.fn(),
+    listAlbumFavorites: jest.fn(),
   };
 
   beforeEach(async () => {
@@ -36,7 +39,11 @@ describe('LibraryController', () => {
     await controller.favorite(mockAuthenticatedUser(), 't1');
     await controller.unfavorite(mockAuthenticatedUser(), 't1');
     await controller.listFavorites(mockAuthenticatedUser());
+    await controller.favoriteAlbum(mockAuthenticatedUser(), 'alb1');
+    await controller.unfavoriteAlbum(mockAuthenticatedUser(), 'alb1');
+    await controller.listAlbumFavorites(mockAuthenticatedUser());
     expect(libraryService.follow).toHaveBeenCalledWith('user-1', 'a1');
     expect(libraryService.favorite).toHaveBeenCalledWith('user-1', 't1');
+    expect(libraryService.favoriteAlbum).toHaveBeenCalledWith('user-1', 'alb1');
   });
 });

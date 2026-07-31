@@ -58,4 +58,26 @@ export class LibraryController {
   listFavorites(@CurrentUser() user: AuthenticatedUser) {
     return this.libraryService.listFavorites(user.id);
   }
+
+  @Post('album-favorites/:albumId')
+  favoriteAlbum(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('albumId') albumId: string,
+  ) {
+    return this.libraryService.favoriteAlbum(user.id, albumId);
+  }
+
+  @Delete('album-favorites/:albumId')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  async unfavoriteAlbum(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('albumId') albumId: string,
+  ): Promise<void> {
+    await this.libraryService.unfavoriteAlbum(user.id, albumId);
+  }
+
+  @Get('album-favorites')
+  listAlbumFavorites(@CurrentUser() user: AuthenticatedUser) {
+    return this.libraryService.listAlbumFavorites(user.id);
+  }
 }

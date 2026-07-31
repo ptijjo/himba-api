@@ -81,4 +81,32 @@ describe('LibraryService', () => {
       ConflictException,
     );
   });
+
+  it('favoriteAlbum album existant', async () => {
+    prisma.album.findUnique.mockResolvedValue({ id: 'alb1' });
+    prisma.albumFavorite.create.mockResolvedValue({ id: 'af1' });
+    await expect(service.favoriteAlbum('u1', 'alb1')).resolves.toMatchObject({
+      id: 'af1',
+    });
+  });
+
+  it('favoriteAlbum inconnu / conflit + listes', async () => {
+    prisma.album.findUnique.mockResolvedValue(null);
+    await expect(
+      service.favoriteAlbum('u1', 'missing'),
+    ).rejects.toBeInstanceOf(NotFoundException);
+
+    prisma.album.findUnique.mockResolvedValue({ id: 'alb1' });
+    prisma.albumFavorite.create.mockRejectedValue(new Error('unique'));
+    await expect(service.favoriteAlbum('u1', 'alb1')).rejects.toBeInstanceOf(
+      ConflictException,
+    );
+
+    prisma.albumFavorite.delete.mockResolvedValue({});
+    prisma.albumFavorite.findMany.mockResolvedValue([]);
+    await service.unfavoriteAlbum('u1', 'alb1');
+    await service.listAlbumFavorites('u1');
+    expect(prisma.albumFavorite.delete).toHaveBeenCalled();
+    expect(prisma.albumFavorite.findMany).toHaveBeenCalled();
+  });
 });

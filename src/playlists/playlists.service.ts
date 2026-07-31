@@ -6,13 +6,17 @@ import {
 } from '@nestjs/common';
 import { parseLimit } from '../common/pagination/cursor.dto';
 import { PrismaService } from '../prisma/prisma.service';
+import { StorageService } from '../storage/storage.service';
 import { CreatePlaylistDto } from './dto/create-playlist.dto';
 import { UpdatePlaylistDto } from './dto/update-playlist.dto';
 import { AddPlaylistTrackDto } from './dto/add-playlist-track.dto';
 
 @Injectable()
 export class PlaylistsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly storage: StorageService,
+  ) {}
 
   create(userId: string, dto: CreatePlaylistDto) {
     return this.prisma.playlist.create({
@@ -27,14 +31,30 @@ export class PlaylistsService {
       take: take + 1,
       ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
       orderBy: { createdAt: 'desc' },
-      include: { _count: { select: { tracks: true } } },
+      include: {
+        _count: { select: { tracks: true } },
+        // Jusqu’à 8 titres pour constituer 4 covers (certains sans image)
+        tracks: {
+          take: 8,
+          orderBy: { position: 'asc' },
+          include: {
+            track: {
+              select: {
+                coverUrl: true,
+                album: { select: { coverUrl: true } },
+              },
+            },
+          },
+        },
+      },
     });
     const hasMore = items.length > take;
     const page = hasMore ? items.slice(0, take) : items;
     return {
-      items: page.map(({ _count, ...playlist }) => ({
+      items: page.map(({ _count, tracks, ...playlist }) => ({
         ...playlist,
         trackCount: _count.tracks,
+        coverUrls: this.collectCoverUrls(tracks),
       })),
       nextCursor: hasMore ? page[page.length - 1]?.id ?? null : null,
     };
@@ -103,8 +123,9 @@ export class PlaylistsService {
               price: row.track.price,
               durationMs: row.track.durationMs,
               artistId: row.track.artistId,
-              coverUrl:
+              coverUrl: this.storage.resolvePublicUrl(
                 row.track.coverUrl ?? row.track.album?.coverUrl ?? null,
+              ),
             }
           : row.track,
       })),
@@ -179,5 +200,35 @@ export class PlaylistsService {
       throw new ForbiddenException('Playlist non propriétaire');
     }
     return playlist;
+  }
+
+  /** Jusqu’à 4 covers distinctes (titre puis album) — mosaïque type Deezer. */
+  private collectCoverUrls(
+    rows: Array<{
+      track: {
+        coverUrl: string | null;
+        album: { coverUrl: string } | null;
+      } | null;
+    }>,
+  ): string[] {
+    const urls: string[] = [];
+    const seen = new Set<string>();
+    for (const row of rows) {
+      if (!row.track) {
+        continue;
+      }
+      const resolved = this.storage.resolvePublicUrl(
+        row.track.coverUrl ?? row.track.album?.coverUrl ?? null,
+      );
+      if (!resolved || seen.has(resolved)) {
+        continue;
+      }
+      seen.add(resolved);
+      urls.push(resolved);
+      if (urls.length >= 4) {
+        break;
+      }
+    }
+    return urls;
   }
 }

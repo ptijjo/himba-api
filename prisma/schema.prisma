@@ -56,14 +56,15 @@ model User {
 
   artist         Artist?
   playlists      Playlist[]
-  follows        Follow[]
-  favorites      Favorite[]
-  ratings        Rating[]
-  playEvents     PlayEvent[]
-  purchases      Purchase[]
-  albumPurchases AlbumPurchase[]
-  pushTokens     DevicePushToken[]
-  notifications  Notification[]
+  follows         Follow[]
+  favorites       Favorite[]
+  albumFavorites  AlbumFavorite[]
+  ratings         Rating[]
+  playEvents      PlayEvent[]
+  purchases       Purchase[]
+  albumPurchases  AlbumPurchase[]
+  pushTokens      DevicePushToken[]
+  notifications   Notification[]
 
   @@index([email])
   @@index([username])
@@ -100,9 +101,10 @@ model Album {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  artist    Artist          @relation(fields: [artistId], references: [id], onDelete: Cascade)
-  tracks    Track[]
-  purchases AlbumPurchase[]
+  artist     Artist          @relation(fields: [artistId], references: [id], onDelete: Cascade)
+  tracks     Track[]
+  purchases  AlbumPurchase[]
+  favorites  AlbumFavorite[]
 
   @@index([artistId])
   @@index([createdAt])
@@ -193,6 +195,20 @@ model Favorite {
 
   @@unique([userId, trackId])
   @@map("favorites")
+}
+
+model AlbumFavorite {
+  id        String   @id @default(cuid())
+  userId    String
+  albumId   String
+  createdAt DateTime @default(now())
+
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  album Album @relation(fields: [albumId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, albumId])
+  @@index([albumId])
+  @@map("album_favorites")
 }
 
 model Rating {

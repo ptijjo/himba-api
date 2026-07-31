@@ -131,4 +131,59 @@ export class LibraryService {
         })),
       );
   }
+
+  async favoriteAlbum(userId: string, albumId: string) {
+    const album = await this.prisma.album.findUnique({ where: { id: albumId } });
+    if (!album) {
+      throw new NotFoundException('Album introuvable');
+    }
+    try {
+      return await this.prisma.albumFavorite.create({
+        data: { userId, albumId },
+      });
+    } catch {
+      throw new ConflictException('Album déjà en favoris');
+    }
+  }
+
+  async unfavoriteAlbum(userId: string, albumId: string): Promise<void> {
+    await this.prisma.albumFavorite.delete({
+      where: { userId_albumId: { userId, albumId } },
+    });
+  }
+
+  listAlbumFavorites(userId: string) {
+    return this.prisma.albumFavorite
+      .findMany({
+        where: { userId },
+        include: {
+          album: {
+            select: {
+              id: true,
+              title: true,
+              coverUrl: true,
+              artistId: true,
+              artist: { select: { id: true, displayName: true } },
+              _count: { select: { tracks: true } },
+            },
+          },
+        },
+        orderBy: { createdAt: 'desc' },
+      })
+      .then((items) =>
+        items.map((fav) => ({
+          ...fav,
+          album: fav.album
+            ? {
+                id: fav.album.id,
+                title: fav.album.title,
+                artistId: fav.album.artistId,
+                coverUrl: this.storage.resolvePublicUrl(fav.album.coverUrl),
+                artist: fav.album.artist,
+                _count: fav.album._count,
+              }
+            : undefined,
+        })),
+      );
+  }
 }
