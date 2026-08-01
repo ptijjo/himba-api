@@ -3,15 +3,19 @@ import { NotificationType, Prisma } from '../generated/prisma/client';
 import { parseLimit } from '../common/pagination/cursor.dto';
 import { PrismaService } from '../prisma/prisma.service';
 
+export type NotifyData = {
+  artistId: string;
+  trackId?: string;
+  albumId?: string;
+  followerId?: string;
+  followerUsername?: string;
+};
+
 export type ReleaseNotifyPayload = {
   type: NotificationType;
   title: string;
   body: string;
-  data: {
-    artistId: string;
-    trackId?: string;
-    albumId?: string;
-  };
+  data: NotifyData;
 };
 
 const EXPO_PUSH_URL = 'https://exp.host/--/api/v2/push/send';
@@ -99,6 +103,52 @@ export class NotificationsService {
     }
 
     const userIds = follows.map((f) => f.followerId);
+    await this.createAndPush(userIds, payload, `artiste ${artistId}`);
+  }
+
+  /**
+   * Notifie le compte artiste qu’un utilisateur vient de le suivre.
+   * Pas de notif si auto-follow (même user).
+   */
+  async notifyNewFollower(input: {
+    artistUserId: string;
+    artistId: string;
+    followerId: string;
+    followerUsername: string;
+  }): Promise<void> {
+    if (input.artistUserId === input.followerId) {
+      return;
+    }
+
+    const title = 'Nouveau follower';
+    const body = `${input.followerUsername} a commencé à te suivre`;
+    const payload: ReleaseNotifyPayload = {
+      type: NotificationType.NEW_FOLLOWER,
+      title,
+      body,
+      data: {
+        artistId: input.artistId,
+        followerId: input.followerId,
+        followerUsername: input.followerUsername,
+      },
+    };
+
+    await this.createAndPush(
+      [input.artistUserId],
+      payload,
+      `follow → ${input.artistId}`,
+    );
+  }
+
+  private async createAndPush(
+    userIds: string[],
+    payload: ReleaseNotifyPayload,
+    logCtx: string,
+  ): Promise<void> {
+    if (userIds.length === 0) {
+      return;
+    }
+
     const data = payload.data as Prisma.InputJsonValue;
 
     await this.prisma.notification.createMany({
@@ -125,7 +175,7 @@ export class NotificationsService {
       title: payload.title,
       body: payload.body,
       data: payload.data,
-      channelId: 'sorties',
+      channelId: 'sorties_v2',
       priority: 'high' as const,
     }));
 
@@ -133,7 +183,7 @@ export class NotificationsService {
       await this.sendExpoPush(messages);
     } catch (err) {
       this.logger.warn(
-        `Expo push échoué pour artiste ${artistId}: ${
+        `Expo push échoué (${logCtx}): ${
           err instanceof Error ? err.message : 'erreur inconnue'
         }`,
       );
@@ -146,7 +196,7 @@ export class NotificationsService {
       sound: 'default';
       title: string;
       body: string;
-      data: ReleaseNotifyPayload['data'];
+      data: NotifyData;
       channelId: string;
       priority: 'high';
     }>,

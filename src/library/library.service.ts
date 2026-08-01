@@ -3,6 +3,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { StorageService } from '../storage/storage.service';
 
@@ -11,21 +12,51 @@ export class LibraryService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly storage: StorageService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   async follow(userId: string, artistId: string) {
     const artist = await this.prisma.artist.findUnique({
       where: { id: artistId },
+      select: { id: true, userId: true },
     });
     if (!artist) {
       throw new NotFoundException('Artiste introuvable');
     }
     try {
-      return await this.prisma.follow.create({
+      const follow = await this.prisma.follow.create({
         data: { followerId: userId, artistId },
       });
+
+      // Notif artiste : « @user a commencé à te suivre » (async, non bloquant)
+      void this.notifyFollowAsync(userId, artist);
+
+      return follow;
     } catch {
       throw new ConflictException('Déjà abonné à cet artiste');
+    }
+  }
+
+  private async notifyFollowAsync(
+    followerId: string,
+    artist: { id: string; userId: string },
+  ): Promise<void> {
+    try {
+      const follower = await this.prisma.user.findUnique({
+        where: { id: followerId },
+        select: { username: true },
+      });
+      if (!follower) {
+        return;
+      }
+      await this.notifications.notifyNewFollower({
+        artistUserId: artist.userId,
+        artistId: artist.id,
+        followerId,
+        followerUsername: follower.username,
+      });
+    } catch {
+      // Ne jamais faire échouer le follow pour une notif
     }
   }
 

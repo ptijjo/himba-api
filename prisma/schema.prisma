@@ -24,6 +24,7 @@ enum UserStatus {
 enum NotificationType {
   TRACK_RELEASE
   ALBUM_RELEASE
+  NEW_FOLLOWER
 }
 
 /// Genres catalogue — ajouter une valeur = migration Prisma.

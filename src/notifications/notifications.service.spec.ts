@@ -118,6 +118,42 @@ describe('NotificationsService', () => {
     expect(global.fetch).not.toHaveBeenCalled();
   });
 
+  it('notifyNewFollower crée notif + push pour l’artiste', async () => {
+    prisma.notification.createMany.mockResolvedValue({ count: 1 });
+    prisma.devicePushToken.findMany.mockResolvedValue([
+      { token: 'ExponentPushToken[a]' },
+    ]);
+
+    await service.notifyNewFollower({
+      artistUserId: 'artist-user',
+      artistId: 'artist-1',
+      followerId: 'u2',
+      followerUsername: 'marie',
+    });
+
+    expect(prisma.notification.createMany).toHaveBeenCalledWith({
+      data: [
+        expect.objectContaining({
+          userId: 'artist-user',
+          type: NotificationType.NEW_FOLLOWER,
+          title: 'Nouveau follower',
+          body: 'marie a commencé à te suivre',
+        }),
+      ],
+    });
+    expect(global.fetch).toHaveBeenCalled();
+  });
+
+  it('notifyNewFollower ignore auto-follow', async () => {
+    await service.notifyNewFollower({
+      artistUserId: 'u1',
+      artistId: 'artist-1',
+      followerId: 'u1',
+      followerUsername: 'moi',
+    });
+    expect(prisma.notification.createMany).not.toHaveBeenCalled();
+  });
+
   it('markAllRead + deletePushToken', async () => {
     prisma.notification.updateMany.mockResolvedValue({ count: 3 });
     await expect(service.markAllRead('u1')).resolves.toEqual({ updated: 3 });

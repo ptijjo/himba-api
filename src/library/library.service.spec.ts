@@ -1,5 +1,6 @@
 import { ConflictException, NotFoundException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
+import { NotificationsService } from '../notifications/notifications.service';
 import {
   createMockPrismaService,
   mockPrismaServiceProvider,
@@ -14,24 +15,38 @@ import { LibraryService } from './library.service';
 describe('LibraryService', () => {
   let service: LibraryService;
   let prisma: MockPrismaService;
+  const notifications = {
+    notifyNewFollower: jest.fn().mockResolvedValue(undefined),
+  };
 
   beforeEach(async () => {
     prisma = createMockPrismaService();
+    notifications.notifyNewFollower.mockClear();
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         LibraryService,
         mockPrismaServiceProvider(prisma),
         mockStorageServiceProvider(createMockStorageService()),
+        { provide: NotificationsService, useValue: notifications },
       ],
     }).compile();
     service = module.get(LibraryService);
   });
 
   it('follow artiste existant', async () => {
-    prisma.artist.findUnique.mockResolvedValue({ id: 'a1' });
+    prisma.artist.findUnique.mockResolvedValue({ id: 'a1', userId: 'artist-u' });
     prisma.follow.create.mockResolvedValue({ id: 'f1' });
+    prisma.user.findUnique.mockResolvedValue({ username: 'marie' });
     await expect(service.follow('u1', 'a1')).resolves.toMatchObject({
       id: 'f1',
+    });
+    // Laisse la microtask notif se déclencher
+    await Promise.resolve();
+    expect(notifications.notifyNewFollower).toHaveBeenCalledWith({
+      artistUserId: 'artist-u',
+      artistId: 'a1',
+      followerId: 'u1',
+      followerUsername: 'marie',
     });
   });
 
@@ -64,11 +79,12 @@ describe('LibraryService', () => {
   });
 
   it('follow / favorite conflits et titre manquant', async () => {
-    prisma.artist.findUnique.mockResolvedValue({ id: 'a1' });
+    prisma.artist.findUnique.mockResolvedValue({ id: 'a1', userId: 'au' });
     prisma.follow.create.mockRejectedValue(new Error('unique'));
     await expect(service.follow('u1', 'a1')).rejects.toBeInstanceOf(
       ConflictException,
     );
+    expect(notifications.notifyNewFollower).not.toHaveBeenCalled();
 
     prisma.track.findUnique.mockResolvedValue(null);
     await expect(service.favorite('u1', 'missing')).rejects.toBeInstanceOf(
