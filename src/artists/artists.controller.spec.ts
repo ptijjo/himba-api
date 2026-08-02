@@ -48,14 +48,14 @@ describe('ArtistsController', () => {
   });
 
   it('findOne / update délèguent', async () => {
-    await controller.findOne('a1');
+    await controller.findOne('a1', mockAuthenticatedUser());
     await controller.update(
       'a1',
       mockAuthenticatedUser(),
       { bio: 'x' },
       undefined,
     );
-    expect(artistsService.findById).toHaveBeenCalledWith('a1');
+    expect(artistsService.findById).toHaveBeenCalledWith('a1', 'user-1');
     expect(artistsService.update).toHaveBeenCalled();
   });
 });

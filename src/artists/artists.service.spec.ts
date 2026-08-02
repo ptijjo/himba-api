@@ -15,12 +15,16 @@ import {
   mockStorageServiceProvider,
 } from '../test/mocks/storage.mock';
 import { UsersService } from '../users/users.service';
+import { RatingsService } from '../ratings/ratings.service';
 import { ArtistsService } from './artists.service';
 
 describe('ArtistsService', () => {
   let service: ArtistsService;
   let prisma: MockPrismaService;
   let storage: ReturnType<typeof createMockStorageService>;
+  let ratingsService: { getSummary: jest.Mock };
+
+  const emptySummary = { average: null, count: 0, myValue: null };
 
   const artist = {
     id: 'a1',
@@ -42,12 +46,16 @@ describe('ArtistsService', () => {
     prisma = createMockPrismaService();
     storage = createMockStorageService();
     prisma.follow.count.mockResolvedValue(0);
+    ratingsService = {
+      getSummary: jest.fn().mockResolvedValue(emptySummary),
+    };
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         ArtistsService,
         mockPrismaServiceProvider(prisma),
         mockStorageServiceProvider(storage),
         { provide: UsersService, useValue: {} },
+        { provide: RatingsService, useValue: ratingsService },
       ],
     }).compile();
     service = module.get(ArtistsService);
@@ -116,7 +124,7 @@ describe('ArtistsService', () => {
 
   it('findById introuvable + update cover fallback r2', async () => {
     prisma.artist.findUnique.mockResolvedValue(null);
-    await expect(service.findById('missing')).rejects.toBeInstanceOf(
+    await expect(service.findById('missing', 'viewer-1')).rejects.toBeInstanceOf(
       NotFoundException,
     );
 

@@ -11,6 +11,7 @@ import { assertMoneyInRange, money } from '../common/money/money';
 import { parseLimit } from '../common/pagination/cursor.dto';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { RatingsService } from '../ratings/ratings.service';
 import { StorageService } from '../storage/storage.service';
 import {
   AddAlbumTracksDto,
@@ -32,6 +33,7 @@ export class AlbumsService {
     private readonly artistsService: ArtistsService,
     private readonly configService: ConfigService,
     private readonly notificationsService: NotificationsService,
+    private readonly ratingsService: RatingsService,
   ) {
     this.tracksMax = Number(
       this.configService.get<string | number>('ALBUM_TRACKS_MAX', 100),
@@ -100,7 +102,7 @@ export class AlbumsService {
     };
   }
 
-  async findById(id: string) {
+  async findById(id: string, viewerUserId: string) {
     const album = await this.prisma.album.findUnique({
       where: { id },
       include: {
@@ -122,6 +124,10 @@ export class AlbumsService {
     if (!album) {
       throw new NotFoundException('Album introuvable');
     }
+    const ratingSummary = await this.ratingsService.getSummary(
+      { albumId: id },
+      viewerUserId,
+    );
     // Titres sans cover propre → couverture album
     return {
       ...album,
@@ -129,6 +135,7 @@ export class AlbumsService {
         ...t,
         coverUrl: t.coverUrl ?? album.coverUrl ?? null,
       })),
+      ratingSummary,
     };
   }
 

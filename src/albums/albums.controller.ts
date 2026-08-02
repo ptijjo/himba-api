@@ -43,8 +43,11 @@ export class AlbumsController {
   }
 
   @Get(':id')
-  findOne(@Param('id') id: string) {
-    return this.albumsService.findById(id);
+  findOne(
+    @Param('id') id: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.albumsService.findById(id, user.id);
   }
 
   @Post()

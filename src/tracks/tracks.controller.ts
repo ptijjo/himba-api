@@ -43,8 +43,11 @@ export class TracksController {
   }
 
   @Get(':id')
-  findOne(@Param('id') id: string) {
-    return this.tracksService.findById(id);
+  findOne(
+    @Param('id') id: string,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.tracksService.findById(id, user.id);
   }
 
   @Post()

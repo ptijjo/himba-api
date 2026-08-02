@@ -11,6 +11,7 @@ import { assertMoneyInRange, money } from '../common/money/money';
 import { parseLimit } from '../common/pagination/cursor.dto';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { RatingsService } from '../ratings/ratings.service';
 import { StorageService } from '../storage/storage.service';
 import { CreateTrackDto } from './dto/create-track.dto';
 import { UpdateTrackDto } from './dto/update-track.dto';
@@ -40,6 +41,7 @@ export class TracksService {
     private readonly artistsService: ArtistsService,
     private readonly configService: ConfigService,
     private readonly notificationsService: NotificationsService,
+    private readonly ratingsService: RatingsService,
   ) {
     this.priceMin = money(
       this.configService.getOrThrow<string | number>('TRACK_PRICE_MIN'),
@@ -173,7 +175,7 @@ export class TracksService {
     return listTrackGenres();
   }
 
-  async findById(id: string) {
+  async findById(id: string, viewerUserId: string) {
     const track = await this.prisma.track.findUnique({
       where: { id },
       include: trackPublicInclude,
@@ -181,7 +183,14 @@ export class TracksService {
     if (!track) {
       throw new NotFoundException('Titre introuvable');
     }
-    return this.toPublicTrack(track);
+    const ratingSummary = await this.ratingsService.getSummary(
+      { trackId: id },
+      viewerUserId,
+    );
+    return {
+      ...this.toPublicTrack(track),
+      ratingSummary,
+    };
   }
 
   async update(

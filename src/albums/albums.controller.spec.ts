@@ -46,10 +46,10 @@ describe('AlbumsController', () => {
       buffer: Buffer.from('img'),
     } as Express.Multer.File;
     await controller.list({ artistId: 'a1', limit: 10 });
-    await controller.findOne('alb-1');
+    await controller.findOne('alb-1', artist);
     await controller.create(artist, { title: 'LP' }, cover);
     expect(albumsService.list).toHaveBeenCalledWith('a1', undefined, 10);
-    expect(albumsService.findById).toHaveBeenCalledWith('alb-1');
+    expect(albumsService.findById).toHaveBeenCalledWith('alb-1', 'user-1');
     expect(albumsService.create).toHaveBeenCalledWith(
       { id: 'user-1', role: UserRole.ARTIST },
       { title: 'LP' },

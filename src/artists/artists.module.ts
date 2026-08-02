@@ -1,11 +1,12 @@
 import { Module } from '@nestjs/common';
+import { RatingsModule } from '../ratings/ratings.module';
 import { StorageModule } from '../storage/storage.module';
 import { UsersModule } from '../users/users.module';
 import { ArtistsController } from './artists.controller';
 import { ArtistsService } from './artists.service';
 
 @Module({
-  imports: [UsersModule, StorageModule],
+  imports: [UsersModule, StorageModule, RatingsModule],
   controllers: [ArtistsController],
   providers: [ArtistsService],
   exports: [ArtistsService],

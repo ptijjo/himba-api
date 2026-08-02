@@ -10,6 +10,7 @@ type ModelMock = {
   delete: jest.Mock;
   upsert: jest.Mock;
   count: jest.Mock;
+  aggregate: jest.Mock;
 };
 
 function modelMock(): ModelMock {
@@ -22,6 +23,7 @@ function modelMock(): ModelMock {
     delete: jest.fn(),
     upsert: jest.fn(),
     count: jest.fn(),
+    aggregate: jest.fn(),
   };
 }
 

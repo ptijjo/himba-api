@@ -16,6 +16,10 @@ export class UpsertRatingDto {
   @IsString()
   artistId?: string;
 
+  @IsOptional()
+  @IsString()
+  albumId?: string;
+
   @Type(() => Number)
   @IsInt()
   @Min(1)

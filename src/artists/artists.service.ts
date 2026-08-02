@@ -8,6 +8,7 @@ import { Artist, UserRole } from '../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { StorageService } from '../storage/storage.service';
 import { UsersService } from '../users/users.service';
+import { RatingsService } from '../ratings/ratings.service';
 import { BecomeArtistDto } from './dto/become-artist.dto';
 import { UpdateArtistDto } from './dto/update-artist.dto';
 
@@ -17,6 +18,7 @@ export class ArtistsService {
     private readonly prisma: PrismaService,
     private readonly usersService: UsersService,
     private readonly storage: StorageService,
+    private readonly ratingsService: RatingsService,
   ) {}
 
   async become(
@@ -56,7 +58,7 @@ export class ArtistsService {
     return artist;
   }
 
-  async findById(id: string) {
+  async findById(id: string, viewerUserId: string) {
     const artist = await this.prisma.artist.findUnique({
       where: { id },
       include: {
@@ -71,6 +73,10 @@ export class ArtistsService {
     const followingCount = await this.prisma.follow.count({
       where: { followerId: artist.userId },
     });
+    const ratingSummary = await this.ratingsService.getSummary(
+      { artistId: id },
+      viewerUserId,
+    );
     const { user, _count, ...rest } = artist;
     return {
       ...rest,
@@ -78,6 +84,7 @@ export class ArtistsService {
       avatarUrl: this.storage.resolvePublicUrl(user.avatarUrl),
       followersCount: _count.follows,
       followingCount,
+      ratingSummary,
     };
   }
 
@@ -103,7 +110,7 @@ export class ArtistsService {
     dto: UpdateArtistDto,
     cover?: Express.Multer.File,
   ) {
-    const artist = await this.findById(artistId);
+    const artist = await this.findById(artistId, actor.id);
     this.assertOwnerOrAdmin(artist, actor);
 
     const data: {
@@ -129,7 +136,7 @@ export class ArtistsService {
     return this.prisma.artist.update({
       where: { id: artistId },
       data,
-    }).then(() => this.findById(artistId));
+    }).then(() => this.findById(artistId, actor.id));
   }
 
   assertOwnerOrAdmin(

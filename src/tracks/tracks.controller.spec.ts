@@ -50,7 +50,7 @@ describe('TracksController', () => {
   it('list / findOne / download délèguent', async () => {
     await controller.list({ limit: 10, genre: 'AFRO' as never });
     await controller.listGenres();
-    await controller.findOne('t1');
+    await controller.findOne('t1', mockAuthenticatedUser());
     await controller.download('t1', mockAuthenticatedUser());
     expect(tracksService.list).toHaveBeenCalledWith(
       undefined,
@@ -59,7 +59,7 @@ describe('TracksController', () => {
       undefined,
     );
     expect(tracksService.listGenres).toHaveBeenCalled();
-    expect(tracksService.findById).toHaveBeenCalledWith('t1');
+    expect(tracksService.findById).toHaveBeenCalledWith('t1', 'user-1');
     expect(tracksService.getDownloadUrl).toHaveBeenCalledWith('t1', 'user-1');
   });
 

@@ -18,6 +18,7 @@ import {
   mockStorageServiceProvider,
   MockStorageService,
 } from '../test/mocks/storage.mock';
+import { RatingsService } from '../ratings/ratings.service';
 import { TracksService } from './tracks.service';
 
 describe('TracksService', () => {
@@ -25,6 +26,9 @@ describe('TracksService', () => {
   let prisma: MockPrismaService;
   let storage: MockStorageService;
   let artistsService: { findByUserId: jest.Mock };
+  let ratingsService: { getSummary: jest.Mock };
+
+  const emptySummary = { average: null, count: 0, myValue: null };
 
   const artist = {
     id: 'artist-1',
@@ -63,6 +67,9 @@ describe('TracksService', () => {
     artistsService = {
       findByUserId: jest.fn().mockResolvedValue(artist),
     };
+    ratingsService = {
+      getSummary: jest.fn().mockResolvedValue(emptySummary),
+    };
     const module: TestingModule = await Test.createTestingModule({
       providers: [
         TracksService,
@@ -74,6 +81,7 @@ describe('TracksService', () => {
           provide: NotificationsService,
           useValue: { notifyArtistFollowers: jest.fn() },
         },
+        { provide: RatingsService, useValue: ratingsService },
       ],
     }).compile();
     service = module.get(TracksService);
@@ -323,7 +331,7 @@ describe('TracksService', () => {
       artist: { id: 'a', displayName: 'A' },
       album: { coverUrl: 'https://cdn.himba.test/albums/x.webp' },
     });
-    await expect(service.findById('t-free')).resolves.toMatchObject({
+    await expect(service.findById('t-free', 'viewer-1')).resolves.toMatchObject({
       coverUrl: 'https://cdn.himba.test/albums/x.webp',
     });
   });
@@ -376,7 +384,7 @@ describe('TracksService', () => {
 
   it('findById / update prix / download gratuit / admin owner', async () => {
     prisma.track.findUnique.mockResolvedValueOnce(null);
-    await expect(service.findById('missing')).rejects.toBeInstanceOf(
+    await expect(service.findById('missing', 'viewer-1')).rejects.toBeInstanceOf(
       NotFoundException,
     );
 
@@ -384,7 +392,7 @@ describe('TracksService', () => {
       ...freeTrack,
       artist: { id: 'a', displayName: 'A' },
     });
-    await expect(service.findById('t-free')).resolves.not.toHaveProperty(
+    await expect(service.findById('t-free', 'viewer-1')).resolves.not.toHaveProperty(
       'audioObjectKey',
     );
 
