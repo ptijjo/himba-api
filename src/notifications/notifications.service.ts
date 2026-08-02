@@ -85,6 +85,25 @@ export class NotificationsService {
     return { updated: result.count };
   }
 
+  /** Supprime une actu appartenant à l’utilisateur. */
+  async deleteOne(userId: string, notificationId: string): Promise<void> {
+    const row = await this.prisma.notification.findUnique({
+      where: { id: notificationId },
+    });
+    if (!row || row.userId !== userId) {
+      throw new NotFoundException('Notification introuvable');
+    }
+    await this.prisma.notification.delete({ where: { id: notificationId } });
+  }
+
+  /** Vide le fil Actus de l’utilisateur. */
+  async deleteAll(userId: string): Promise<{ deleted: number }> {
+    const result = await this.prisma.notification.deleteMany({
+      where: { userId },
+    });
+    return { deleted: result.count };
+  }
+
   /**
    * 1. Followers de l’artiste
    * 2. Créer Notification in-app (batch)

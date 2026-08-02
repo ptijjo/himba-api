@@ -13,6 +13,8 @@ describe('NotificationsController', () => {
     listMine: jest.Mock;
     markRead: jest.Mock;
     markAllRead: jest.Mock;
+    deleteOne: jest.Mock;
+    deleteAll: jest.Mock;
   };
 
   beforeEach(async () => {
@@ -22,6 +24,8 @@ describe('NotificationsController', () => {
       listMine: jest.fn(),
       markRead: jest.fn(),
       markAllRead: jest.fn(),
+      deleteOne: jest.fn(),
+      deleteAll: jest.fn(),
     };
     const module: TestingModule = await Test.createTestingModule({
       controllers: [NotificationsController],
@@ -52,5 +56,10 @@ describe('NotificationsController', () => {
     await controller.markRead(user, 'n1');
     await controller.markAllRead(user);
     expect(service.markAllRead).toHaveBeenCalledWith('user-1');
+
+    await controller.deleteOne(user, 'n1');
+    expect(service.deleteOne).toHaveBeenCalledWith('user-1', 'n1');
+    await controller.deleteAll(user);
+    expect(service.deleteAll).toHaveBeenCalledWith('user-1');
   });
 });

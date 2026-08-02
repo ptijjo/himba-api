@@ -18,6 +18,7 @@ import { PrismaModule } from './prisma/prisma.module';
 import { RatingsModule } from './ratings/ratings.module';
 import { RecommendationsModule } from './recommendations/recommendations.module';
 import { RedisModule } from './redis/redis.module';
+import { ReportsModule } from './reports/reports.module';
 import { StorageModule } from './storage/storage.module';
 import { TracksModule } from './tracks/tracks.module';
 import { UsersModule } from './users/users.module';
@@ -55,6 +56,7 @@ import { UsersModule } from './users/users.module';
     RecommendationsModule,
     PaymentsModule,
     NotificationsModule,
+    ReportsModule,
   ],
   controllers: [AppController],
   providers: [

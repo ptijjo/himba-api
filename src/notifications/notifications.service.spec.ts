@@ -163,4 +163,34 @@ describe('NotificationsService', () => {
       service.deletePushToken('u1', 'ExponentPushToken[x]'),
     ).resolves.toBeUndefined();
   });
+
+  it('deleteOne refuse si autre user / introuvable', async () => {
+    prisma.notification.findUnique.mockResolvedValue(null);
+    await expect(service.deleteOne('u1', 'n1')).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
+
+    prisma.notification.findUnique.mockResolvedValue({
+      id: 'n1',
+      userId: 'other',
+    });
+    await expect(service.deleteOne('u1', 'n1')).rejects.toBeInstanceOf(
+      NotFoundException,
+    );
+  });
+
+  it('deleteOne + deleteAll', async () => {
+    prisma.notification.findUnique.mockResolvedValue({
+      id: 'n1',
+      userId: 'u1',
+    });
+    prisma.notification.delete.mockResolvedValue({});
+    await expect(service.deleteOne('u1', 'n1')).resolves.toBeUndefined();
+    expect(prisma.notification.delete).toHaveBeenCalledWith({
+      where: { id: 'n1' },
+    });
+
+    prisma.notification.deleteMany.mockResolvedValue({ count: 4 });
+    await expect(service.deleteAll('u1')).resolves.toEqual({ deleted: 4 });
+  });
 });

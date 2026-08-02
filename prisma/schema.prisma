@@ -27,6 +27,30 @@ enum NotificationType {
   NEW_FOLLOWER
 }
 
+/** Cible d’un signalement utilisateur. */
+enum ReportTargetType {
+  TRACK
+  ARTIST
+  USER
+}
+
+/** Motif de signalement (liste fermée). */
+enum ReportReason {
+  INAPPROPRIATE_CONTENT
+  FRAUD_SCAM
+  IMPERSONATION
+  SPAM
+  COPYRIGHT
+  OTHER
+}
+
+enum ReportStatus {
+  OPEN
+  REVIEWING
+  RESOLVED
+  DISMISSED
+}
+
 /// Genres catalogue — ajouter une valeur = migration Prisma.
 enum TrackGenre {
   RAP
@@ -66,6 +90,7 @@ model User {
   albumPurchases  AlbumPurchase[]
   pushTokens      DevicePushToken[]
   notifications   Notification[]
+  reportsFiled    Report[]         @relation("ReportsFiled")
 
   @@index([email])
   @@index([username])
@@ -317,4 +342,24 @@ model Notification {
 
   @@index([userId, createdAt])
   @@map("notifications")
+}
+
+/** Signalement (fraude, contenu inapproprié, spam, …) — traité par admin. */
+model Report {
+  id         String           @id @default(cuid())
+  reporterId String
+  targetType ReportTargetType
+  targetId   String
+  reason     ReportReason
+  details    String?
+  status     ReportStatus     @default(OPEN)
+  createdAt  DateTime         @default(now())
+  updatedAt  DateTime         @updatedAt
+
+  reporter User @relation("ReportsFiled", fields: [reporterId], references: [id], onDelete: Cascade)
+
+  @@unique([reporterId, targetType, targetId])
+  @@index([status, createdAt])
+  @@index([targetType, targetId])
+  @@map("reports")
 }

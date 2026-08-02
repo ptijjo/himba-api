@@ -56,10 +56,16 @@ export class NotificationsController {
     );
   }
 
-  // read-all avant :id/read pour éviter que Nest capture « read-all » comme id.
+  // Routes statiques avant :id pour éviter les collisions Nest.
   @Patch('notifications/read-all')
   markAllRead(@CurrentUser() user: AuthenticatedUser) {
     return this.notificationsService.markAllRead(user.id);
+  }
+
+  @Delete('notifications/all')
+  @HttpCode(HttpStatus.OK)
+  deleteAll(@CurrentUser() user: AuthenticatedUser) {
+    return this.notificationsService.deleteAll(user.id);
   }
 
   @Patch('notifications/:id/read')
@@ -68,5 +74,14 @@ export class NotificationsController {
     @Param('id') id: string,
   ) {
     return this.notificationsService.markRead(user.id, id);
+  }
+
+  @Delete('notifications/:id')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  async deleteOne(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('id') id: string,
+  ): Promise<void> {
+    await this.notificationsService.deleteOne(user.id, id);
   }
 }
