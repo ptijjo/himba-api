@@ -7,6 +7,7 @@ import { JwtService } from '@nestjs/jwt';
 import { Test, TestingModule } from '@nestjs/testing';
 import * as bcrypt from 'bcrypt';
 import { UserRole, UserStatus } from '../generated/prisma/client';
+import { MailService } from '../mail/mail.service';
 import { UsersService } from '../users/users.service';
 import { mockConfigServiceProvider } from '../test/mocks/config.mock';
 import {
@@ -36,6 +37,7 @@ describe('AuthService', () => {
     findByLogin: jest.Mock;
     findById: jest.Mock;
   };
+  let mailService: { send: jest.Mock };
 
   const nowIso = '2026-07-28T10:00:00.000Z';
 
@@ -48,6 +50,7 @@ describe('AuthService', () => {
     status: UserStatus.ACTIVE,
     bio: null,
     avatarUrl: null,
+    emailVerifiedAt: new Date('2026-01-01T00:00:00.000Z'),
     createdAt: new Date('2026-01-01T00:00:00.000Z'),
     updatedAt: new Date('2026-01-01T00:00:00.000Z'),
   };
@@ -66,6 +69,7 @@ describe('AuthService', () => {
       findByLogin: jest.fn(),
       findById: jest.fn(),
     };
+    mailService = { send: jest.fn().mockResolvedValue(undefined) };
 
     (bcrypt.hash as jest.Mock).mockResolvedValue('hashed-password');
     (bcrypt.compare as jest.Mock).mockResolvedValue(true);
@@ -82,6 +86,7 @@ describe('AuthService', () => {
         mockConfigServiceProvider(),
         { provide: JwtService, useValue: jwtService },
         { provide: UsersService, useValue: usersService },
+        { provide: MailService, useValue: mailService },
       ],
     }).compile();
 
@@ -94,20 +99,19 @@ describe('AuthService', () => {
   });
 
   describe('register', () => {
-    it('crée un LISTENER, ouvre une session et retourne les tokens', async () => {
-      // Arrange
+    it('crée un LISTENER non vérifié, envoie l’email, sans session', async () => {
       prisma.user.findUnique.mockResolvedValue(null);
-      prisma.user.create.mockResolvedValue(baseUser);
-      redis.smembers.mockResolvedValue([]);
+      prisma.user.create.mockResolvedValue({
+        ...baseUser,
+        emailVerifiedAt: null,
+      });
 
-      // Act
       const result = await service.register({
         email: 'Alice@Example.com',
         username: 'alice',
         password: 'Password1!',
       });
 
-      // Assert
       expect(bcrypt.hash).toHaveBeenCalledWith('Password1!', 14);
       expect(prisma.user.create).toHaveBeenCalledWith({
         data: {
@@ -115,24 +119,16 @@ describe('AuthService', () => {
           username: 'alice',
           passwordHash: 'hashed-password',
           role: UserRole.LISTENER,
+          emailVerifiedAt: null,
         },
       });
-      expect(result.accessToken).toBe('access-token');
-      expect(result.refreshToken).toBe('refresh-token');
-      expect(result.user).toEqual({
-        id: baseUser.id,
-        username: baseUser.username,
-        email: baseUser.email,
-        role: baseUser.role,
-        status: baseUser.status,
-        bio: null,
-        avatarUrl: null,
-        createdAt: baseUser.createdAt,
-        updatedAt: baseUser.updatedAt,
+      expect(result).toEqual({
+        message: expect.stringContaining('boîte mail'),
+        email: 'alice@example.com',
       });
-      expect(result.user).not.toHaveProperty('passwordHash');
-      expect(redis.setJson).toHaveBeenCalled();
-      expect(redis.sadd).toHaveBeenCalled();
+      expect(mailService.send).toHaveBeenCalled();
+      expect(redis.set).toHaveBeenCalled();
+      expect(jwtService.signAsync).not.toHaveBeenCalled();
     });
 
     it('lève ConflictException si email déjà pris', async () => {
@@ -161,6 +157,19 @@ describe('AuthService', () => {
           password: 'Password1!',
         }),
       ).rejects.toBeInstanceOf(ConflictException);
+    });
+  });
+
+  describe('login email verification', () => {
+    it('refuse si email non vérifié', async () => {
+      usersService.findByLogin.mockResolvedValue({
+        ...baseUser,
+        emailVerifiedAt: null,
+        createdAt: new Date(nowIso),
+      });
+      await expect(
+        service.login({ login: 'alice', password: 'Password1!' }),
+      ).rejects.toBeInstanceOf(ForbiddenException);
     });
   });
 

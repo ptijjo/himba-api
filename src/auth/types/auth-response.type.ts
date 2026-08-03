@@ -27,3 +27,9 @@ export type AuthLoginResponse = AuthTokensResponse & {
   user: AuthUserResponse;
   sessionId: string;
 };
+
+/** Réponse POST /auth/register — pas de tokens tant que l’email n’est pas vérifié. */
+export type AuthRegisterPendingResponse = {
+  message: string;
+  email: string;
+};

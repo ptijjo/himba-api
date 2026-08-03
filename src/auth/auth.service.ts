@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ConflictException,
   ForbiddenException,
   Injectable,
@@ -7,8 +8,9 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
-import { randomUUID } from 'crypto';
+import { createHash, randomBytes, randomUUID } from 'crypto';
 import { User, UserRole, UserStatus } from '../generated/prisma/client';
+import { MailService } from '../mail/mail.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { RedisService } from '../redis/redis.service';
 import { UsersService } from '../users/users.service';
@@ -17,6 +19,7 @@ import { RefreshDto } from './dto/refresh.dto';
 import { RegisterDto } from './dto/register.dto';
 import {
   AuthLoginResponse,
+  AuthRegisterPendingResponse,
   AuthSessionRecord,
   AuthTokensResponse,
   AuthUserResponse,
@@ -38,6 +41,8 @@ export class AuthService {
   private readonly refreshSecret: string;
   private readonly refreshExpiresIn: string;
   private readonly bcryptRounds: number;
+  private readonly emailVerifyTtlSeconds: number;
+  private readonly apiPublicUrl: string;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -45,6 +50,7 @@ export class AuthService {
     private readonly jwtService: JwtService,
     private readonly usersService: UsersService,
     private readonly configService: ConfigService,
+    private readonly mailService: MailService,
   ) {
     this.maxSessions = Number(
       this.configService.get<string | number>('AUTH_MAX_SESSIONS', 3),
@@ -64,28 +70,26 @@ export class AuthService {
     this.bcryptRounds = resolveBcryptRounds(
       this.configService.get<string | number>('BCRYPT_ROUNDS'),
     );
+    const ttlHours = Number(
+      this.configService.get<string | number>('EMAIL_VERIFY_TTL_HOURS', 48),
+    );
+    this.emailVerifyTtlSeconds = Math.max(1, ttlHours) * 3600;
+    this.apiPublicUrl = (
+      this.configService.get<string>('API_PUBLIC_URL') ??
+      'http://localhost:8989'
+    ).replace(/\/$/, '');
   }
 
-  async register(dto: RegisterDto): Promise<AuthLoginResponse> {
+  /**
+   * Inscription : crée le user (email non vérifié), envoie le lien Mailjet.
+   * Pas de session / tokens tant que l’email n’est pas confirmé.
+   */
+  async register(dto: RegisterDto): Promise<AuthRegisterPendingResponse> {
     const email = dto.email.trim().toLowerCase();
     const username = dto.username.trim();
 
-    // 1. Unicité email / username avant création
-    const existingEmail = await this.prisma.user.findUnique({
-      where: { email },
-    });
-    if (existingEmail) {
-      throw new ConflictException('Email déjà utilisé');
-    }
+    await this.assertCanClaimIdentity(email, username);
 
-    const existingUsername = await this.prisma.user.findUnique({
-      where: { username },
-    });
-    if (existingUsername) {
-      throw new ConflictException('Nom d’utilisateur déjà utilisé');
-    }
-
-    // 2. Hash mot de passe (BCRYPT_ROUNDS, défaut 14) + création LISTENER
     const passwordHash = await bcrypt.hash(dto.password, this.bcryptRounds);
     const user = await this.prisma.user.create({
       data: {
@@ -93,30 +97,98 @@ export class AuthService {
         username,
         passwordHash,
         role: UserRole.LISTENER,
+        emailVerifiedAt: null,
       },
     });
 
-    // 3. Session Redis + tokens
-    return this.issueSessionForUser(user);
+    await this.sendVerificationEmail(user);
+
+    return {
+      message:
+        'Inscription presque terminée — vérifie ta boîte mail (lien valable 48 h).',
+      email: user.email,
+    };
   }
 
   async login(dto: LoginDto): Promise<AuthLoginResponse> {
-    // 1. Résoudre login (email ou pseudo)
     const user = await this.usersService.findByLogin(dto.login);
     if (!user) {
       throw new UnauthorizedException('Identifiants invalides');
     }
 
-    // 2. Vérifier mot de passe
     const passwordOk = await bcrypt.compare(dto.password, user.passwordHash);
     if (!passwordOk) {
       throw new UnauthorizedException('Identifiants invalides');
     }
 
-    // 3. Bloquer les comptes bannis dès le login
     this.assertNotBanned(user);
+    await this.assertEmailVerifiedOrCleanup(user);
 
     return this.issueSessionForUser(user);
+  }
+
+  /**
+   * Confirme l’email via token (lien Mailjet). Token à usage unique, TTL 48 h.
+   */
+  async verifyEmail(rawToken: string): Promise<{ message: string }> {
+    const token = rawToken?.trim();
+    if (!token) {
+      throw new BadRequestException('Lien de vérification invalide');
+    }
+
+    const userId = await this.redis.get(this.emailVerifyKey(token));
+    if (!userId) {
+      throw new BadRequestException(
+        'Lien invalide ou expiré — réinscris-toi ou demande un nouvel email',
+      );
+    }
+
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) {
+      await this.redis.del(this.emailVerifyKey(token));
+      throw new BadRequestException('Compte introuvable');
+    }
+
+    if (user.emailVerifiedAt) {
+      await this.redis.del(this.emailVerifyKey(token));
+      return { message: 'Email déjà vérifié — tu peux te connecter.' };
+    }
+
+    await this.prisma.user.update({
+      where: { id: user.id },
+      data: { emailVerifiedAt: new Date() },
+    });
+    await this.redis.del(this.emailVerifyKey(token));
+
+    return {
+      message: 'Email confirmé — ouvre Himba et connecte-toi pour continuer.',
+    };
+  }
+
+  /** Renvoie un lien si le compte existe et n’est pas encore vérifié. */
+  async resendVerification(
+    emailRaw: string,
+  ): Promise<{ message: string }> {
+    const email = emailRaw.trim().toLowerCase();
+    const user = await this.prisma.user.findUnique({ where: { email } });
+    // Message neutre anti-énumération
+    const okMessage =
+      'Si un compte est en attente, un nouvel email a été envoyé.';
+
+    if (!user || user.emailVerifiedAt) {
+      return { message: okMessage };
+    }
+
+    if (this.isRegistrationExpired(user)) {
+      await this.prisma.user.delete({ where: { id: user.id } });
+      return {
+        message:
+          'Le délai de 48 h est dépassé — réinscris-toi pour recevoir un nouveau lien.',
+      };
+    }
+
+    await this.sendVerificationEmail(user);
+    return { message: okMessage };
   }
 
   async refresh(dto: RefreshDto): Promise<AuthTokensResponse> {
@@ -328,6 +400,93 @@ export class AuthService {
     }
   }
 
+  /**
+   * Email non vérifié : refuse le login ; si > 48 h, purge le compte (pas enregistré).
+   */
+  private async assertEmailVerifiedOrCleanup(user: User): Promise<void> {
+    if (user.emailVerifiedAt) {
+      return;
+    }
+    if (this.isRegistrationExpired(user)) {
+      await this.prisma.user.delete({ where: { id: user.id } });
+      throw new UnauthorizedException(
+        'Inscription expirée (48 h) — réinscris-toi',
+      );
+    }
+    throw new ForbiddenException(
+      'Email non vérifié — consulte ta boîte mail (lien valable 48 h)',
+    );
+  }
+
+  private isRegistrationExpired(user: User): boolean {
+    const ageMs = Date.now() - user.createdAt.getTime();
+    return ageMs > this.emailVerifyTtlSeconds * 1000;
+  }
+
+  private async assertCanClaimIdentity(
+    email: string,
+    username: string,
+  ): Promise<void> {
+    const existingEmail = await this.prisma.user.findUnique({
+      where: { email },
+    });
+    if (existingEmail) {
+      if (
+        !existingEmail.emailVerifiedAt &&
+        this.isRegistrationExpired(existingEmail)
+      ) {
+        await this.prisma.user.delete({ where: { id: existingEmail.id } });
+      } else if (!existingEmail.emailVerifiedAt) {
+        throw new ConflictException(
+          'Email déjà utilisé — vérifie ta boîte mail ou attends l’expiration du lien (48 h)',
+        );
+      } else {
+        throw new ConflictException('Email déjà utilisé');
+      }
+    }
+
+    const existingUsername = await this.prisma.user.findUnique({
+      where: { username },
+    });
+    if (existingUsername) {
+      if (
+        !existingUsername.emailVerifiedAt &&
+        this.isRegistrationExpired(existingUsername)
+      ) {
+        await this.prisma.user.delete({ where: { id: existingUsername.id } });
+      } else {
+        throw new ConflictException('Nom d’utilisateur déjà utilisé');
+      }
+    }
+  }
+
+  private async sendVerificationEmail(user: User): Promise<void> {
+    const rawToken = randomBytes(32).toString('hex');
+    const redisKey = this.emailVerifyKey(rawToken);
+    await this.redis.set(redisKey, user.id, this.emailVerifyTtlSeconds);
+
+    const link = `${this.apiPublicUrl}/auth/verify-email?token=${rawToken}`;
+    const hours = Math.round(this.emailVerifyTtlSeconds / 3600);
+
+    await this.mailService.send({
+      to: user.email,
+      subject: 'Himba — confirme ton adresse email',
+      text: `Bonjour ${user.username},\n\nConfirme ton email Himba en ouvrant ce lien (valable ${hours} h) :\n${link}\n\nEnsuite : ouvre l’app Himba et connecte-toi avec ton email (ou pseudo) et ton mot de passe.\n\nSi tu n’as pas créé de compte, ignore ce message.`,
+      html: `<p>Bonjour <strong>${escapeHtml(user.username)}</strong>,</p>
+<p>Confirme ton adresse email pour activer ton compte Himba.</p>
+<p><a href="${link}">Valider mon email</a></p>
+<p>Ce lien est valable <strong>${hours} heures</strong>.</p>
+<p><strong>Ensuite</strong> : ouvre l’application Himba et <strong>connecte-toi</strong> (email ou pseudo + mot de passe). La validation ne te connecte pas automatiquement.</p>
+<p>Si tu n’as pas créé de compte, ignore ce message.</p>`,
+    });
+  }
+
+  private emailVerifyKey(rawToken: string): string {
+    // Hash du token en clé Redis — fuite DB Redis ≠ token brut réutilisable facilement
+    const digest = createHash('sha256').update(rawToken).digest('hex');
+    return `email-verify:${digest}`;
+  }
+
   private toAuthUser(user: User): AuthUserResponse {
     return {
       id: user.id,
@@ -353,6 +512,14 @@ export class AuthService {
   private sessionsIndexKey(userId: string): string {
     return `sessions:${userId}`;
   }
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
 }
 
 /** Convertit JWT_REFRESH_EXPIRES_IN (ex. 7d) en secondes Redis TTL. */

@@ -22,6 +22,7 @@ export type AdminSeedPrisma = {
         passwordHash: string;
         role: UserRole;
         status: UserStatus;
+        emailVerifiedAt?: Date | null;
       };
     }) => Promise<User>;
     update: (args: {
@@ -31,6 +32,7 @@ export type AdminSeedPrisma = {
         role: UserRole;
         status: UserStatus;
         username?: string;
+        emailVerifiedAt?: Date | null;
       };
     }) => Promise<User>;
   };
@@ -61,13 +63,14 @@ export async function seedAdminUser(
   const existingByEmail = await prisma.user.findUnique({ where: { email } });
 
   if (existingByEmail) {
-    // 2. Ré-seed : forcer rôle ADMIN + nouveau hash
+    // 2. Ré-seed : forcer rôle ADMIN + nouveau hash + email vérifié
     return prisma.user.update({
       where: { id: existingByEmail.id },
       data: {
         passwordHash,
         role: UserRole.ADMIN,
         status: UserStatus.ACTIVE,
+        emailVerifiedAt: new Date(),
       },
     });
   }
@@ -81,7 +84,7 @@ export async function seedAdminUser(
     );
   }
 
-  // 3. Création initiale
+  // 3. Création initiale (admin seed = déjà vérifié)
   return prisma.user.create({
     data: {
       email,
@@ -89,6 +92,7 @@ export async function seedAdminUser(
       passwordHash,
       role: UserRole.ADMIN,
       status: UserStatus.ACTIVE,
+      emailVerifiedAt: new Date(),
     },
   });
 }

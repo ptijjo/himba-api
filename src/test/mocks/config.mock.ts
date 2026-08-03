@@ -22,6 +22,13 @@ const defaultConfig: Record<string, string | number> = {
   ALBUM_TRACKS_MAX: 100,
   STRIPE_SECRET_KEY: 'sk_test_x',
   STRIPE_WEBHOOK_SECRET: 'whsec_x',
+  MJ_APIKEY_PUBLIC: 'mj_pub',
+  MJ_APIKEY_PRIVATE: 'mj_priv',
+  MAILJET_SENDER_EMAIL: 'noreply@himba.test',
+  MAILJET_SENDER_NAME: 'Himba',
+  API_PUBLIC_URL: 'http://localhost:8989',
+  EMAIL_VERIFY_TTL_HOURS: 48,
+  NODE_ENV: 'test',
 };
 
 export function mockConfigServiceProvider(

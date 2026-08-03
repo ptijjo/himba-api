@@ -1,10 +1,4 @@
-import {
-  IsEmail,
-  IsString,
-  Matches,
-  MaxLength,
-  MinLength,
-} from 'class-validator';
+import { IsStrongPassword, IsEmail, IsString, Matches, MaxLength, MinLength } from 'class-validator';
 
 export class RegisterDto {
   @IsEmail()
@@ -18,11 +12,24 @@ export class RegisterDto {
   })
   username!: string;
 
+  /**
+   * Mot de passe fort : ≥ 8 car., majuscule, minuscule, chiffre, symbole.
+   * Aligné @IsStrongPassword (class-validator).
+   */
   @IsString()
-  @MinLength(8)
   @MaxLength(72)
-  @Matches(/^(?=.*[A-Za-z])(?=.*\d).+$/, {
-    message: 'password: au moins une lettre et un chiffre',
-  })
+  @IsStrongPassword(
+    {
+      minLength: 8,
+      minLowercase: 1,
+      minUppercase: 1,
+      minNumbers: 1,
+      minSymbols: 1,
+    },
+    {
+      message:
+        'password: au moins 8 caractères, une majuscule, une minuscule, un chiffre et un symbole',
+    },
+  )
   password!: string;
 }

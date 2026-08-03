@@ -62,6 +62,7 @@ describe('seedAdminUser', () => {
         passwordHash: 'hashed-admin',
         role: UserRole.ADMIN,
         status: UserStatus.ACTIVE,
+        emailVerifiedAt: expect.any(Date),
       },
     });
     expect(result.role).toBe(UserRole.ADMIN);
@@ -87,6 +88,7 @@ describe('seedAdminUser', () => {
         passwordHash: 'hashed-admin',
         role: UserRole.ADMIN,
         status: UserStatus.ACTIVE,
+        emailVerifiedAt: expect.any(Date),
       },
     });
     expect(prisma.user.create).not.toHaveBeenCalled();
