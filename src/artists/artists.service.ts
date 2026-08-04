@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ConflictException,
   ForbiddenException,
   Injectable,
@@ -119,7 +120,16 @@ export class ArtistsService {
       coverUrl?: string;
     } = {};
     if (dto.displayName !== undefined) {
-      data.displayName = dto.displayName.trim();
+      const trimmed = dto.displayName.trim();
+      // Changement de nom → revalidation CGU artiste obligatoire
+      if (trimmed !== artist.displayName) {
+        if (dto.acceptArtistTerms !== true) {
+          throw new BadRequestException(
+            'Tu dois accepter à nouveau les conditions artiste pour changer de nom',
+          );
+        }
+        data.displayName = trimmed;
+      }
     }
     if (dto.bio !== undefined) {
       data.bio = dto.bio;

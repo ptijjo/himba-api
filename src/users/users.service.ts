@@ -94,9 +94,28 @@ export class UsersService {
     dto: UpdateProfileDto,
     avatar?: Express.Multer.File,
   ): Promise<PublicUser> {
-    const data: { bio?: string | null; avatarUrl?: string } = {};
+    const data: {
+      bio?: string | null;
+      avatarUrl?: string;
+      username?: string;
+    } = {};
     if (dto.bio !== undefined) {
       data.bio = dto.bio;
+    }
+    if (dto.username !== undefined) {
+      const username = dto.username.trim();
+      const current = await this.findById(userId);
+      if (!current) {
+        throw new NotFoundException('Utilisateur introuvable');
+      }
+      if (username !== current.username) {
+        // 1. Unicité (hors soi-même) · 2. Appliquer le nouveau pseudo
+        const taken = await this.findByUsername(username);
+        if (taken && taken.id !== userId) {
+          throw new ConflictException('Nom d’utilisateur déjà utilisé');
+        }
+        data.username = username;
+      }
     }
     if (avatar) {
       const uploaded = await this.storage.uploadImage(

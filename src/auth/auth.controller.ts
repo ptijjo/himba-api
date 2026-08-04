@@ -19,6 +19,7 @@ import type { Request } from 'express';
 import { AuthService } from './auth.service';
 import { CurrentUser } from './decorators/current-user.decorator';
 import { Public } from './decorators/public.decorator';
+import { ChangePasswordDto } from './dto/change-password.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { LoginHistoryQueryDto } from './dto/login-history-query.dto';
 import { LoginDto } from './dto/login.dto';
@@ -110,6 +111,24 @@ export class AuthController {
   @HttpCode(HttpStatus.OK)
   resetPasswordPost(@Body() dto: ResetPasswordDto) {
     return this.authService.resetPassword(dto.token, dto.newPassword);
+  }
+
+  /**
+   * Changement de mot de passe (Bearer) — ancien + nouveau.
+   */
+  @Post('change-password')
+  @HttpCode(HttpStatus.OK)
+  @Throttle({ auth: { limit: 5, ttl: 60_000 } })
+  changePassword(
+    @CurrentUser() user: AuthenticatedUser,
+    @Body() dto: ChangePasswordDto,
+  ) {
+    return this.authService.changePassword(
+      user.id,
+      dto.currentPassword,
+      dto.newPassword,
+      user.sessionId,
+    );
   }
 
   @Public()
@@ -249,35 +268,54 @@ function renderResetPasswordHtml(rawToken: string): string {
   <style>
     body { font-family: system-ui, sans-serif; background: #0B0618; color: #F5F0FF;
       display: flex; min-height: 100vh; align-items: center; justify-content: center; margin: 0; padding: 24px; }
-    .card { width: 100%; max-width: 440px; background: #1E1730; border-radius: 16px; padding: 28px; }
-    h1 { color: #E85D04; font-size: 1.3rem; margin: 0 0 12px; text-align: center; }
+    .card { width: 100%; max-width: 440px; background: #1E1730; border-radius: 16px; padding: 28px; text-align: center; }
+    h1 { color: #E85D04; font-size: 1.3rem; margin: 0 0 12px; }
     p { margin: 0 0 12px; line-height: 1.5; opacity: 0.9; }
-    label { display: block; font-size: 0.95rem; margin: 12px 0 6px; }
+    label { display: block; font-size: 0.95rem; margin: 12px 0 6px; text-align: left; }
     input { width: 100%; box-sizing: border-box; border-radius: 10px; border: 1px solid #5A4A7A;
       background: #120B23; color: #F5F0FF; padding: 12px; font-size: 1rem; }
-    button { margin-top: 16px; width: 100%; border: 0; border-radius: 999px; background: #E85D04;
-      color: #F5F0FF; font-size: 1rem; font-weight: 700; padding: 12px 16px; cursor: pointer; }
+    button, .btn { margin-top: 16px; display: inline-block; width: 100%; box-sizing: border-box; border: 0;
+      border-radius: 999px; background: #E85D04; color: #F5F0FF; font-size: 1rem; font-weight: 700;
+      padding: 12px 16px; cursor: pointer; text-decoration: none; text-align: center; }
     .msg { margin-top: 12px; font-size: 0.92rem; }
     .err { color: #FF6B7A; }
     .ok { color: #F5F0FF; }
+    .hidden { display: none !important; }
+    ol { text-align: left; margin: 16px 0 0; padding-left: 1.2rem; line-height: 1.6; opacity: 0.92; font-size: 0.95rem; }
+    .hint { margin-top: 14px; font-size: 0.85rem; opacity: 0.65; }
   </style>
 </head>
 <body>
   <div class="card">
-    <h1>Nouveau mot de passe</h1>
-    <p>Choisis un nouveau mot de passe (8+ caractères, majuscule, minuscule, chiffre et symbole).</p>
-    <form id="form">
-      <input type="hidden" id="token" value="${token}" />
-      <label for="password">Nouveau mot de passe</label>
-      <input id="password" type="password" autocomplete="new-password" required />
-      <label for="confirm">Confirmer le mot de passe</label>
-      <input id="confirm" type="password" autocomplete="new-password" required />
-      <button type="submit">Mettre à jour mon mot de passe</button>
-      <div id="msg" class="msg"></div>
-    </form>
+    <div id="formPanel">
+      <h1>Nouveau mot de passe</h1>
+      <p>Choisis un nouveau mot de passe (8+ caractères, majuscule, minuscule, chiffre et symbole).</p>
+      <form id="form">
+        <input type="hidden" id="token" value="${token}" />
+        <label for="password">Nouveau mot de passe</label>
+        <input id="password" type="password" autocomplete="new-password" required />
+        <label for="confirm">Confirmer le mot de passe</label>
+        <input id="confirm" type="password" autocomplete="new-password" required />
+        <button type="submit">Mettre à jour mon mot de passe</button>
+        <div id="msg" class="msg"></div>
+      </form>
+    </div>
+    <div id="successPanel" class="hidden">
+      <h1>Mot de passe mis à jour</h1>
+      <p>Ton nouveau mot de passe est enregistré. Le lien de réinitialisation n’est plus utilisable.</p>
+      <ol>
+        <li>Ouvre l’application <strong>Himba</strong></li>
+        <li>Va sur <strong>Se connecter</strong></li>
+        <li>Entre ton email (ou pseudo) et ton <strong>nouveau</strong> mot de passe</li>
+      </ol>
+      <a class="btn" href="himba://login">Ouvrir Himba</a>
+      <p class="hint">Si le bouton ne fonctionne pas, ouvre Himba manuellement puis connecte-toi. Tu peux fermer cette page.</p>
+    </div>
   </div>
   <script>
     const form = document.getElementById('form');
+    const formPanel = document.getElementById('formPanel');
+    const successPanel = document.getElementById('successPanel');
     const msg = document.getElementById('msg');
     const token = document.getElementById('token');
     const password = document.getElementById('password');
@@ -312,9 +350,13 @@ function renderResetPasswordHtml(rawToken: string): string {
           msg.textContent = message || 'Mise à jour impossible.';
           return;
         }
-        msg.className = 'msg ok';
-        msg.textContent = 'Mot de passe mis à jour. Retourne dans l’app Himba pour te connecter.';
-        form.reset();
+        // 1. Brûler le token côté page (déjà invalidé côté API)
+        token.value = '';
+        password.value = '';
+        confirm.value = '';
+        // 2. Masquer le formulaire — plus de 2e soumission possible dans l’UI
+        formPanel.classList.add('hidden');
+        successPanel.classList.remove('hidden');
       } catch {
         msg.textContent = 'Erreur réseau. Réessaie.';
       }

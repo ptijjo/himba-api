@@ -466,6 +466,55 @@ export class AuthService {
     };
   }
 
+  /**
+   * Changement de mot de passe connecté.
+   * 1. Vérifier l’ancien · 2. Hasher le nouveau · 3. Révoquer les autres sessions.
+   */
+  async changePassword(
+    userId: string,
+    currentPassword: string,
+    newPassword: string,
+    currentSessionId?: string,
+  ): Promise<{ message: string }> {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) {
+      throw new UnauthorizedException('Utilisateur introuvable');
+    }
+    this.assertNotBanned(user);
+
+    const passwordOk = await bcrypt.compare(
+      currentPassword,
+      user.passwordHash,
+    );
+    if (!passwordOk) {
+      throw new UnauthorizedException('Mot de passe actuel incorrect');
+    }
+    if (currentPassword === newPassword) {
+      throw new BadRequestException(
+        'Le nouveau mot de passe doit être différent de l’actuel',
+      );
+    }
+
+    const passwordHash = await bcrypt.hash(newPassword, this.bcryptRounds);
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { passwordHash },
+    });
+
+    // Garde la session courante ; révoque les autres appareils
+    const sessionIds = await this.redis.smembers(
+      this.sessionsIndexKey(userId),
+    );
+    for (const sessionId of sessionIds) {
+      if (currentSessionId && sessionId === currentSessionId) {
+        continue;
+      }
+      await this.revokeSession(userId, sessionId);
+    }
+
+    return { message: 'Mot de passe mis à jour.' };
+  }
+
   async refresh(dto: RefreshDto): Promise<AuthTokensResponse> {
     // 1. Vérifier signature refresh JWT
     let payload: RefreshPayload;
