@@ -48,6 +48,7 @@ export type MockPrismaService = {
     deleteMany: jest.Mock;
   };
   report: ModelMock;
+  loginAttempt: ModelMock;
   $connect: jest.Mock;
   $disconnect: jest.Mock;
   $transaction: jest.Mock;
@@ -76,6 +77,7 @@ export function createMockPrismaService(): MockPrismaService {
       deleteMany: jest.fn(),
     },
     report: modelMock(),
+    loginAttempt: modelMock(),
     $connect: jest.fn(),
     $disconnect: jest.fn(),
     $transaction: jest.fn(),

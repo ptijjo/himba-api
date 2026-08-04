@@ -106,6 +106,7 @@ export class PlaylistsService {
             coverUrl: true,
             durationMs: true,
             artistId: true,
+            artist: { select: { id: true, displayName: true } },
             album: { select: { coverUrl: true } },
           },
         },
@@ -123,6 +124,12 @@ export class PlaylistsService {
               price: row.track.price,
               durationMs: row.track.durationMs,
               artistId: row.track.artistId,
+              artist: row.track.artist
+                ? {
+                    id: row.track.artist.id,
+                    displayName: row.track.artist.displayName,
+                  }
+                : undefined,
               coverUrl: this.storage.resolvePublicUrl(
                 row.track.coverUrl ?? row.track.album?.coverUrl ?? null,
               ),

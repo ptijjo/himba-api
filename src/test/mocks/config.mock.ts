@@ -7,6 +7,8 @@ const defaultConfig: Record<string, string | number> = {
   JWT_REFRESH_SECRET: 'test-refresh-secret',
   JWT_REFRESH_EXPIRES_IN: '7d',
   AUTH_MAX_SESSIONS: 3,
+  AUTH_LOGIN_MAX_ATTEMPTS: 5,
+  AUTH_LOGIN_LOCKOUT_TTL_SEC: 900,
   BCRYPT_ROUNDS: 14,
   DATABASE_URL: 'postgresql://test:test@localhost:5432/himba_test',
   REDIS_HOST: 'localhost',

@@ -5,6 +5,7 @@ import { PassportModule } from '@nestjs/passport';
 import { MailModule } from '../mail/mail.module';
 import { UsersModule } from '../users/users.module';
 import { AuthController } from './auth.controller';
+import { AuthModerationController } from './auth-moderation.controller';
 import { AuthService } from './auth.service';
 import { JwtStrategy } from './strategies/jwt.strategy';
 
@@ -28,7 +29,7 @@ import { JwtStrategy } from './strategies/jwt.strategy';
       }),
     }),
   ],
-  controllers: [AuthController],
+  controllers: [AuthController, AuthModerationController],
   providers: [AuthService, JwtStrategy],
   exports: [AuthService, JwtModule, PassportModule],
 })

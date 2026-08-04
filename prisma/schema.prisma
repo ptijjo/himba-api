@@ -93,10 +93,30 @@ model User {
   pushTokens      DevicePushToken[]
   notifications   Notification[]
   reportsFiled    Report[]         @relation("ReportsFiled")
+  loginAttempts   LoginAttempt[]
 
   @@index([email])
   @@index([username])
   @@map("users")
+}
+
+/** Audit des tentatives de connexion (succès / échec) — historique user + lockout. */
+model LoginAttempt {
+  id              String   @id @default(cuid())
+  userId          String?
+  loginNormalized String
+  success         Boolean
+  /** INVALID_CREDENTIALS | LOCKED | BANNED | EMAIL_UNVERIFIED | SUCCESS */
+  reason          String?
+  ip              String?
+  userAgent       String?
+  createdAt       DateTime @default(now())
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userId, createdAt])
+  @@index([loginNormalized, createdAt])
+  @@map("login_attempts")
 }
 
 model Artist {

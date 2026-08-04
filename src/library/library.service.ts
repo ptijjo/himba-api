@@ -137,6 +137,7 @@ export class LibraryService {
               price: true,
               coverUrl: true,
               artistId: true,
+              artist: { select: { id: true, displayName: true } },
               durationMs: true,
               album: { select: { coverUrl: true } },
             },
@@ -154,6 +155,12 @@ export class LibraryService {
                 genre: fav.track.genre,
                 price: fav.track.price,
                 artistId: fav.track.artistId,
+                artist: fav.track.artist
+                  ? {
+                      id: fav.track.artist.id,
+                      displayName: fav.track.artist.displayName,
+                    }
+                  : undefined,
                 durationMs: fav.track.durationMs,
                 coverUrl:
                   fav.track.coverUrl ?? fav.track.album?.coverUrl ?? null,

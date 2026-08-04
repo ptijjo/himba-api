@@ -2,6 +2,8 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
+  HttpException,
+  HttpStatus,
   UnauthorizedException,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
@@ -74,6 +76,7 @@ describe('AuthService', () => {
 
     (bcrypt.hash as jest.Mock).mockResolvedValue('hashed-password');
     (bcrypt.compare as jest.Mock).mockResolvedValue(true);
+    prisma.loginAttempt.create.mockResolvedValue({ id: 'attempt-1' });
 
     jwtService.signAsync
       .mockResolvedValueOnce('access-token')
@@ -171,6 +174,12 @@ describe('AuthService', () => {
       await expect(
         service.login({ login: 'alice', password: 'Password1!' }),
       ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(prisma.loginAttempt.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          reason: 'EMAIL_UNVERIFIED',
+          success: false,
+        }),
+      });
     });
   });
 
@@ -179,15 +188,32 @@ describe('AuthService', () => {
       usersService.findByLogin.mockResolvedValue(baseUser);
       redis.smembers.mockResolvedValue([]);
 
-      const result = await service.login({
-        login: 'Alice@Example.com',
-        password: 'Password1!',
-      });
+      const result = await service.login(
+        {
+          login: 'Alice@Example.com',
+          password: 'Password1!',
+        },
+        { ip: '1.2.3.4', userAgent: 'Himba/1' },
+      );
 
       expect(usersService.findByLogin).toHaveBeenCalledWith('Alice@Example.com');
       expect(bcrypt.compare).toHaveBeenCalledWith('Password1!', 'hashed');
       expect(result.accessToken).toBe('access-token');
       expect(result.sessionId).toBeDefined();
+      expect(redis.del).toHaveBeenCalledWith(
+        'login:fail:alice@example.com',
+        'login:lock:alice@example.com',
+      );
+      expect(prisma.loginAttempt.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          userId: 'user-1',
+          loginNormalized: 'alice@example.com',
+          success: true,
+          reason: 'SUCCESS',
+          ip: '1.2.3.4',
+          userAgent: 'Himba/1',
+        }),
+      });
     });
 
     it('lève UnauthorizedException si identifiants invalides', async () => {
@@ -196,6 +222,14 @@ describe('AuthService', () => {
       await expect(
         service.login({ login: 'unknown', password: 'x' }),
       ).rejects.toBeInstanceOf(UnauthorizedException);
+      expect(redis.incr).toHaveBeenCalledWith('login:fail:unknown');
+      expect(prisma.loginAttempt.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          loginNormalized: 'unknown',
+          success: false,
+          reason: 'INVALID_CREDENTIALS',
+        }),
+      });
     });
 
     it('lève UnauthorizedException si mot de passe incorrect', async () => {
@@ -205,6 +239,7 @@ describe('AuthService', () => {
       await expect(
         service.login({ login: 'alice', password: 'wrong' }),
       ).rejects.toBeInstanceOf(UnauthorizedException);
+      expect(redis.incr).toHaveBeenCalledWith('login:fail:alice');
     });
 
     it('lève ForbiddenException si user BANNED', async () => {
@@ -216,6 +251,12 @@ describe('AuthService', () => {
       await expect(
         service.login({ login: 'alice', password: 'Password1!' }),
       ).rejects.toBeInstanceOf(ForbiddenException);
+      expect(prisma.loginAttempt.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          reason: 'BANNED',
+          success: false,
+        }),
+      });
     });
 
     it('révoque la session la plus ancienne quand max 3 est dépassé', async () => {
@@ -261,6 +302,188 @@ describe('AuthService', () => {
         'session:user-1:s1',
       );
       expect(redis.srem).toHaveBeenCalledWith('sessions:user-1', 's1');
+    });
+  });
+
+  describe('login lockout', () => {
+    it('pose un lock Redis après 5 échecs', async () => {
+      usersService.findByLogin.mockResolvedValue(baseUser);
+      (bcrypt.compare as jest.Mock).mockResolvedValue(false);
+      redis.incr.mockResolvedValue(5);
+
+      await expect(
+        service.login({ login: 'alice', password: 'wrong' }),
+      ).rejects.toBeInstanceOf(UnauthorizedException);
+
+      expect(redis.set).toHaveBeenCalledWith('login:lock:alice', '1', 900);
+      expect(prisma.loginAttempt.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          reason: 'INVALID_CREDENTIALS',
+          userId: 'user-1',
+        }),
+      });
+    });
+
+    it('expire le compteur d’échecs au premier fail', async () => {
+      usersService.findByLogin.mockResolvedValue(null);
+      redis.incr.mockResolvedValue(1);
+
+      await expect(
+        service.login({ login: 'ghost', password: 'x' }),
+      ).rejects.toBeInstanceOf(UnauthorizedException);
+
+      expect(redis.expire).toHaveBeenCalledWith('login:fail:ghost', 900);
+      expect(redis.set).not.toHaveBeenCalledWith(
+        'login:lock:ghost',
+        '1',
+        900,
+      );
+    });
+
+    it('refuse avec 429 si déjà verrouillé sans comparer le mot de passe', async () => {
+      redis.get.mockImplementation(async (key: string) =>
+        key === 'login:lock:alice' ? '1' : null,
+      );
+      usersService.findByLogin.mockResolvedValue(baseUser);
+
+      try {
+        await service.login({ login: 'alice', password: 'Password1!' });
+        fail('devrait lever HttpException');
+      } catch (e) {
+        expect(e).toBeInstanceOf(HttpException);
+        expect((e as HttpException).getStatus()).toBe(
+          HttpStatus.TOO_MANY_REQUESTS,
+        );
+      }
+      expect(bcrypt.compare).not.toHaveBeenCalled();
+      expect(prisma.loginAttempt.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          reason: 'LOCKED',
+          success: false,
+          userId: 'user-1',
+        }),
+      });
+    });
+
+    it('enregistre LOCKED même si le login ne correspond à aucun user', async () => {
+      redis.get.mockImplementation(async (key: string) =>
+        key === 'login:lock:ghost' ? '1' : null,
+      );
+      usersService.findByLogin.mockResolvedValue(null);
+
+      await expect(
+        service.login({ login: 'ghost', password: 'x' }),
+      ).rejects.toBeInstanceOf(HttpException);
+
+      expect(prisma.loginAttempt.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          reason: 'LOCKED',
+          success: false,
+          userId: undefined,
+        }),
+      });
+    });
+
+    it('reset le compteur après un login réussi', async () => {
+      usersService.findByLogin.mockResolvedValue(baseUser);
+      redis.smembers.mockResolvedValue([]);
+
+      await service.login({ login: 'alice', password: 'Password1!' });
+
+      expect(redis.del).toHaveBeenCalledWith(
+        'login:fail:alice',
+        'login:lock:alice',
+      );
+    });
+  });
+
+  describe('listLoginHistory', () => {
+    it('liste les tentatives du user triées par date desc', async () => {
+      const rows = [
+        {
+          id: 'a2',
+          userId: 'user-1',
+          loginNormalized: 'alice',
+          success: true,
+          reason: 'SUCCESS',
+          ip: '1.1.1.1',
+          userAgent: 'app',
+          createdAt: new Date('2026-07-28T11:00:00.000Z'),
+        },
+        {
+          id: 'a1',
+          userId: 'user-1',
+          loginNormalized: 'alice',
+          success: false,
+          reason: 'INVALID_CREDENTIALS',
+          ip: '1.1.1.1',
+          userAgent: 'app',
+          createdAt: new Date('2026-07-28T10:00:00.000Z'),
+        },
+      ];
+      prisma.loginAttempt.findMany.mockResolvedValue(rows);
+
+      const result = await service.listLoginHistory('user-1', { limit: 20 });
+
+      expect(prisma.loginAttempt.findMany).toHaveBeenCalledWith({
+        where: { userId: 'user-1' },
+        orderBy: { createdAt: 'desc' },
+        take: 21,
+      });
+      expect(result.items).toHaveLength(2);
+      expect(result.nextCursor).toBeNull();
+      expect(result.items[0].id).toBe('a2');
+    });
+
+    it('renvoie nextCursor quand il y a une page suivante', async () => {
+      const rows = [
+        {
+          id: 'a3',
+          userId: 'user-1',
+          loginNormalized: 'alice',
+          success: true,
+          reason: 'SUCCESS',
+          ip: null,
+          userAgent: null,
+          createdAt: new Date('2026-07-28T12:00:00.000Z'),
+        },
+        {
+          id: 'a2',
+          userId: 'user-1',
+          loginNormalized: 'alice',
+          success: false,
+          reason: 'LOCKED',
+          ip: null,
+          userAgent: null,
+          createdAt: new Date('2026-07-28T11:00:00.000Z'),
+        },
+        {
+          id: 'a1',
+          userId: 'user-1',
+          loginNormalized: 'alice',
+          success: false,
+          reason: 'INVALID_CREDENTIALS',
+          ip: null,
+          userAgent: null,
+          createdAt: new Date('2026-07-28T10:00:00.000Z'),
+        },
+      ];
+      prisma.loginAttempt.findMany.mockResolvedValue(rows);
+
+      const result = await service.listLoginHistory('user-1', {
+        cursor: 'a4',
+        limit: 2,
+      });
+
+      expect(prisma.loginAttempt.findMany).toHaveBeenCalledWith({
+        where: { userId: 'user-1' },
+        orderBy: { createdAt: 'desc' },
+        take: 3,
+        cursor: { id: 'a4' },
+        skip: 1,
+      });
+      expect(result.items).toHaveLength(2);
+      expect(result.nextCursor).toBe('a2');
     });
   });
 
@@ -542,6 +765,154 @@ describe('AuthService', () => {
       await expect(
         service.revokeSession('user-1', 'missing'),
       ).rejects.toBeInstanceOf(UnauthorizedException);
+    });
+  });
+
+  describe('admin login monitor', () => {
+    it('liste les tentatives globales avec filtres', async () => {
+      prisma.loginAttempt.findMany.mockResolvedValue([
+        {
+          id: 'a1',
+          userId: 'user-1',
+          loginNormalized: 'alice',
+          success: false,
+          reason: 'LOCKED',
+          ip: '1.1.1.1',
+          userAgent: 'x',
+          createdAt: new Date(nowIso),
+        },
+      ]);
+
+      const result = await service.listLoginAttemptsForAdmin({
+        success: false,
+        login: 'Alice',
+        limit: 20,
+      });
+
+      expect(prisma.loginAttempt.findMany).toHaveBeenCalledWith({
+        where: {
+          success: false,
+          loginNormalized: { contains: 'alice', mode: 'insensitive' },
+        },
+        orderBy: { createdAt: 'desc' },
+        take: 21,
+      });
+      expect(result.items[0].loginNormalized).toBe('alice');
+      expect(result.nextCursor).toBeNull();
+    });
+
+    it('liste les locks Redis avec TTL et fail count', async () => {
+      redis.scanKeys.mockResolvedValue([
+        'login:lock:alice',
+        'login:lock:bob@x.com',
+      ]);
+      redis.ttl.mockResolvedValueOnce(600).mockResolvedValueOnce(120);
+      redis.get
+        .mockResolvedValueOnce('5')
+        .mockResolvedValueOnce('3');
+
+      const result = await service.listLoginLocks();
+
+      expect(redis.scanKeys).toHaveBeenCalledWith('login:lock:*');
+      expect(result.locks).toEqual([
+        {
+          loginNormalized: 'alice',
+          ttlSeconds: 600,
+          failCount: 5,
+        },
+        {
+          loginNormalized: 'bob@x.com',
+          ttlSeconds: 120,
+          failCount: 3,
+        },
+      ]);
+    });
+
+    it('débloque un login (supprime fail + lock)', async () => {
+      const result = await service.unlockLogin('Alice@Example.com');
+
+      expect(redis.del).toHaveBeenCalledWith(
+        'login:fail:alice@example.com',
+        'login:lock:alice@example.com',
+      );
+      expect(result.message).toContain('débloqué');
+    });
+  });
+
+  describe('verifyEmail', () => {
+    it('confirme un email via token Redis', async () => {
+      redis.get.mockResolvedValue('user-1');
+      prisma.user.findUnique.mockResolvedValue({
+        ...baseUser,
+        emailVerifiedAt: null,
+      });
+      prisma.user.update.mockResolvedValue({
+        ...baseUser,
+        emailVerifiedAt: new Date(nowIso),
+      });
+
+      const result = await service.verifyEmail('raw-token');
+
+      expect(result.message).toContain('Email confirmé');
+      expect(prisma.user.update).toHaveBeenCalledWith({
+        where: { id: 'user-1' },
+        data: { emailVerifiedAt: expect.any(Date) },
+      });
+      expect(redis.del).toHaveBeenCalled();
+    });
+
+    it('refuse un token vide', async () => {
+      await expect(service.verifyEmail('')).rejects.toBeInstanceOf(
+        BadRequestException,
+      );
+    });
+
+    it('refuse un token inconnu / expiré', async () => {
+      redis.get.mockResolvedValue(null);
+      await expect(service.verifyEmail('gone')).rejects.toBeInstanceOf(
+        BadRequestException,
+      );
+    });
+
+    it('gère un email déjà vérifié', async () => {
+      redis.get.mockResolvedValue('user-1');
+      prisma.user.findUnique.mockResolvedValue(baseUser);
+
+      const result = await service.verifyEmail('raw-token');
+
+      expect(result.message).toContain('déjà vérifié');
+      expect(prisma.user.update).not.toHaveBeenCalled();
+    });
+
+    it('refuse si le user a disparu', async () => {
+      redis.get.mockResolvedValue('user-1');
+      prisma.user.findUnique.mockResolvedValue(null);
+
+      await expect(service.verifyEmail('raw-token')).rejects.toBeInstanceOf(
+        BadRequestException,
+      );
+    });
+  });
+
+  describe('resendVerification', () => {
+    it('renvoie un message neutre si compte absent ou déjà vérifié', async () => {
+      prisma.user.findUnique.mockResolvedValue(null);
+      const result = await service.resendVerification('a@b.com');
+      expect(result.message).toContain('Si un compte');
+      expect(mailService.send).not.toHaveBeenCalled();
+    });
+
+    it('renvoie un email si compte en attente', async () => {
+      prisma.user.findUnique.mockResolvedValue({
+        ...baseUser,
+        emailVerifiedAt: null,
+        createdAt: new Date(nowIso),
+      });
+
+      const result = await service.resendVerification(baseUser.email);
+
+      expect(result.message).toContain('Si un compte');
+      expect(mailService.send).toHaveBeenCalled();
     });
   });
 

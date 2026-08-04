@@ -33,3 +33,44 @@ export type AuthRegisterPendingResponse = {
   message: string;
   email: string;
 };
+
+/** Métadonnées client capturées au login (audit, pas de secrets). */
+export type LoginClientMeta = {
+  ip?: string;
+  userAgent?: string;
+};
+
+export type AuthLoginAttemptItem = {
+  id: string;
+  success: boolean;
+  reason: string | null;
+  ip: string | null;
+  userAgent: string | null;
+  createdAt: Date;
+};
+
+export type AuthLoginHistoryResponse = {
+  items: AuthLoginAttemptItem[];
+  nextCursor: string | null;
+};
+
+/** Ligne d’audit pour le moniteur ADMIN (inclut login + userId). */
+export type AdminLoginAttemptItem = AuthLoginAttemptItem & {
+  userId: string | null;
+  loginNormalized: string;
+};
+
+export type AdminLoginAttemptsResponse = {
+  items: AdminLoginAttemptItem[];
+  nextCursor: string | null;
+};
+
+export type AdminLoginLockItem = {
+  loginNormalized: string;
+  ttlSeconds: number | null;
+  failCount: number | null;
+};
+
+export type AdminLoginLocksResponse = {
+  locks: AdminLoginLockItem[];
+};

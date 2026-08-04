@@ -82,6 +82,14 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
     await this.client.del(...keys);
   }
 
+  async incr(key: string): Promise<number> {
+    return this.client.incr(key);
+  }
+
+  async expire(key: string, ttlSeconds: number): Promise<void> {
+    await this.client.expire(key, ttlSeconds);
+  }
+
   async getJson<T>(key: string): Promise<T | null> {
     const raw = await this.get(key);
     if (raw === null) {
@@ -114,5 +122,31 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
 
   async smembers(key: string): Promise<string[]> {
     return this.client.smembers(key);
+  }
+
+  /**
+   * SCAN non bloquant — pour listes admin (ex. login:lock:*).
+   * Évite KEYS qui bloque Redis en prod.
+   */
+  async scanKeys(pattern: string): Promise<string[]> {
+    const found: string[] = [];
+    let cursor = '0';
+    do {
+      const [next, batch] = await this.client.scan(
+        cursor,
+        'MATCH',
+        pattern,
+        'COUNT',
+        100,
+      );
+      cursor = next;
+      found.push(...batch);
+    } while (cursor !== '0');
+    return found;
+  }
+
+  /** TTL restant en secondes ; -1 = pas d’expire ; -2 = clé absente. */
+  async ttl(key: string): Promise<number> {
+    return this.client.ttl(key);
   }
 }

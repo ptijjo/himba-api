@@ -2,6 +2,8 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
+  HttpException,
+  HttpStatus,
   Injectable,
   UnauthorizedException,
 } from '@nestjs/common';
@@ -9,6 +11,8 @@ import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
 import { createHash, randomBytes, randomUUID } from 'crypto';
+import { parseLimit } from '../common/pagination/cursor.dto';
+import { resolveBcryptRounds } from '../common/crypto/bcrypt-rounds';
 import { User, UserRole, UserStatus } from '../generated/prisma/client';
 import { MailService } from '../mail/mail.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -18,19 +22,30 @@ import { LoginDto } from './dto/login.dto';
 import { RefreshDto } from './dto/refresh.dto';
 import { RegisterDto } from './dto/register.dto';
 import {
+  AuthLoginHistoryResponse,
   AuthLoginResponse,
   AuthRegisterPendingResponse,
   AuthSessionRecord,
   AuthTokensResponse,
   AuthUserResponse,
+  AdminLoginAttemptsResponse,
+  AdminLoginLockItem,
+  AdminLoginLocksResponse,
+  LoginClientMeta,
 } from './types/auth-response.type';
-import { resolveBcryptRounds } from '../common/crypto/bcrypt-rounds';
 
 type RefreshPayload = {
   sub: string;
   jti: string;
   sessionId: string;
 };
+
+type LoginAttemptReason =
+  | 'SUCCESS'
+  | 'INVALID_CREDENTIALS'
+  | 'LOCKED'
+  | 'BANNED'
+  | 'EMAIL_UNVERIFIED';
 
 @Injectable()
 export class AuthService {
@@ -44,6 +59,8 @@ export class AuthService {
   private readonly emailVerifyTtlSeconds: number;
   private readonly resetPasswordTtlSeconds: number;
   private readonly apiPublicUrl: string;
+  private readonly loginMaxAttempts: number;
+  private readonly loginLockoutTtlSec: number;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -83,6 +100,21 @@ export class AuthService {
       this.configService.get<string>('API_PUBLIC_URL') ??
       'http://localhost:8989'
     ).replace(/\/$/, '');
+    this.loginMaxAttempts = Math.max(
+      1,
+      Number(
+        this.configService.get<string | number>('AUTH_LOGIN_MAX_ATTEMPTS', 5),
+      ),
+    );
+    this.loginLockoutTtlSec = Math.max(
+      60,
+      Number(
+        this.configService.get<string | number>(
+          'AUTH_LOGIN_LOCKOUT_TTL_SEC',
+          900,
+        ),
+      ),
+    );
   }
 
   /**
@@ -115,21 +147,198 @@ export class AuthService {
     };
   }
 
-  async login(dto: LoginDto): Promise<AuthLoginResponse> {
+  async login(
+    dto: LoginDto,
+    meta: LoginClientMeta = {},
+  ): Promise<AuthLoginResponse> {
+    const loginNormalized = dto.login.trim().toLowerCase();
+
+    // 1. Lockout Redis par identifiant (défense compte, en plus du throttle IP)
+    if (await this.isLoginLocked(loginNormalized)) {
+      const existing = await this.usersService.findByLogin(dto.login);
+      await this.recordLoginAttempt({
+        userId: existing?.id,
+        loginNormalized,
+        success: false,
+        reason: 'LOCKED',
+        meta,
+      });
+      const minutes = Math.ceil(this.loginLockoutTtlSec / 60);
+      throw new HttpException(
+        `Trop de tentatives — réessaie dans environ ${minutes} min`,
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
+    }
+
+    // 2. Identifiants
     const user = await this.usersService.findByLogin(dto.login);
     if (!user) {
+      await this.registerFailedCredentials(loginNormalized, undefined, meta);
       throw new UnauthorizedException('Identifiants invalides');
     }
 
     const passwordOk = await bcrypt.compare(dto.password, user.passwordHash);
     if (!passwordOk) {
+      await this.registerFailedCredentials(loginNormalized, user.id, meta);
       throw new UnauthorizedException('Identifiants invalides');
     }
 
-    this.assertNotBanned(user);
-    await this.assertEmailVerifiedOrCleanup(user);
+    // 3. Ban permanent / email non vérifié (hors compteur brute-force)
+    if (user.status === UserStatus.BANNED) {
+      await this.recordLoginAttempt({
+        userId: user.id,
+        loginNormalized,
+        success: false,
+        reason: 'BANNED',
+        meta,
+      });
+      throw new ForbiddenException('Compte banni');
+    }
+
+    if (!user.emailVerifiedAt) {
+      await this.recordLoginAttempt({
+        userId: user.id,
+        loginNormalized,
+        success: false,
+        reason: 'EMAIL_UNVERIFIED',
+        meta,
+      });
+      await this.assertEmailVerifiedOrCleanup(user);
+    }
+
+    // 4. Succès : reset fails/lock + audit + session
+    await this.clearLoginFailures(loginNormalized);
+    await this.recordLoginAttempt({
+      userId: user.id,
+      loginNormalized,
+      success: true,
+      reason: 'SUCCESS',
+      meta,
+    });
 
     return this.issueSessionForUser(user);
+  }
+
+  /**
+   * Historique des tentatives du compte courant (succès + échecs).
+   * Cursor = id de la dernière ligne renvoyée.
+   */
+  async listLoginHistory(
+    userId: string,
+    query: { cursor?: string; limit?: number } = {},
+  ): Promise<AuthLoginHistoryResponse> {
+    const limit = parseLimit(query.limit);
+    const rows = await this.prisma.loginAttempt.findMany({
+      where: { userId },
+      orderBy: { createdAt: 'desc' },
+      take: limit + 1,
+      ...(query.cursor
+        ? { cursor: { id: query.cursor }, skip: 1 }
+        : {}),
+    });
+
+    const hasMore = rows.length > limit;
+    const page = hasMore ? rows.slice(0, limit) : rows;
+
+    return {
+      items: page.map((row) => ({
+        id: row.id,
+        success: row.success,
+        reason: row.reason,
+        ip: row.ip,
+        userAgent: row.userAgent,
+        createdAt: row.createdAt,
+      })),
+      nextCursor: hasMore ? page[page.length - 1].id : null,
+    };
+  }
+
+  /**
+   * Moniteur ADMIN — toutes les tentatives (filtres success / login).
+   */
+  async listLoginAttemptsForAdmin(query: {
+    cursor?: string;
+    limit?: number;
+    success?: boolean;
+    login?: string;
+  }): Promise<AdminLoginAttemptsResponse> {
+    const limit = parseLimit(query.limit);
+    const loginFilter = query.login?.trim().toLowerCase();
+
+    const rows = await this.prisma.loginAttempt.findMany({
+      where: {
+        ...(query.success !== undefined ? { success: query.success } : {}),
+        ...(loginFilter
+          ? {
+              loginNormalized: {
+                contains: loginFilter,
+                mode: 'insensitive' as const,
+              },
+            }
+          : {}),
+      },
+      orderBy: { createdAt: 'desc' },
+      take: limit + 1,
+      ...(query.cursor
+        ? { cursor: { id: query.cursor }, skip: 1 }
+        : {}),
+    });
+
+    const hasMore = rows.length > limit;
+    const page = hasMore ? rows.slice(0, limit) : rows;
+
+    return {
+      items: page.map((row) => ({
+        id: row.id,
+        userId: row.userId,
+        loginNormalized: row.loginNormalized,
+        success: row.success,
+        reason: row.reason,
+        ip: row.ip,
+        userAgent: row.userAgent,
+        createdAt: row.createdAt,
+      })),
+      nextCursor: hasMore ? page[page.length - 1].id : null,
+    };
+  }
+
+  /** Moniteur ADMIN — comptes temporairement verrouillés (Redis). */
+  async listLoginLocks(): Promise<AdminLoginLocksResponse> {
+    const keys = await this.redis.scanKeys('login:lock:*');
+    const locks: AdminLoginLockItem[] = [];
+
+    for (const key of keys) {
+      const loginNormalized = key.replace(/^login:lock:/, '');
+      if (!loginNormalized) {
+        continue;
+      }
+      const ttl = await this.redis.ttl(key);
+      const failRaw = await this.redis.get(this.loginFailKey(loginNormalized));
+      const failCount =
+        failRaw !== null && failRaw !== '' ? Number(failRaw) : null;
+
+      locks.push({
+        loginNormalized,
+        ttlSeconds: ttl >= 0 ? ttl : null,
+        failCount:
+          failCount !== null && Number.isFinite(failCount) ? failCount : null,
+      });
+    }
+
+    locks.sort((a, b) => a.loginNormalized.localeCompare(b.loginNormalized));
+    return { locks };
+  }
+
+  /** Moniteur ADMIN — lève le ban temporaire (fail + lock Redis). */
+  async unlockLogin(loginRaw: string): Promise<{ message: string }> {
+    const loginNormalized = loginRaw.trim().toLowerCase();
+    if (!loginNormalized) {
+      throw new BadRequestException('Login requis');
+    }
+    await this.clearLoginFailures(loginNormalized);
+    return {
+      message: `Compte « ${loginNormalized} » débloqué — nouvelles tentatives autorisées.`,
+    };
   }
 
   /**
@@ -609,6 +818,75 @@ export class AuthService {
 
   private sessionsIndexKey(userId: string): string {
     return `sessions:${userId}`;
+  }
+
+  private loginFailKey(loginNormalized: string): string {
+    return `login:fail:${loginNormalized}`;
+  }
+
+  private loginLockKey(loginNormalized: string): string {
+    return `login:lock:${loginNormalized}`;
+  }
+
+  private async isLoginLocked(loginNormalized: string): Promise<boolean> {
+    const locked = await this.redis.get(this.loginLockKey(loginNormalized));
+    return locked !== null;
+  }
+
+  private async clearLoginFailures(loginNormalized: string): Promise<void> {
+    await this.redis.del(
+      this.loginFailKey(loginNormalized),
+      this.loginLockKey(loginNormalized),
+    );
+  }
+
+  /**
+   * Incrémente le compteur d’échecs ; pose le lock si seuil atteint.
+   * TTL sur le compteur = fenêtre lockout (échecs anciens expirent).
+   */
+  private async registerFailedCredentials(
+    loginNormalized: string,
+    userId: string | undefined,
+    meta: LoginClientMeta,
+  ): Promise<void> {
+    const failKey = this.loginFailKey(loginNormalized);
+    const fails = await this.redis.incr(failKey);
+    if (fails === 1) {
+      await this.redis.expire(failKey, this.loginLockoutTtlSec);
+    }
+    if (fails >= this.loginMaxAttempts) {
+      await this.redis.set(
+        this.loginLockKey(loginNormalized),
+        '1',
+        this.loginLockoutTtlSec,
+      );
+    }
+    await this.recordLoginAttempt({
+      userId,
+      loginNormalized,
+      success: false,
+      reason: 'INVALID_CREDENTIALS',
+      meta,
+    });
+  }
+
+  private async recordLoginAttempt(input: {
+    userId?: string;
+    loginNormalized: string;
+    success: boolean;
+    reason: LoginAttemptReason;
+    meta: LoginClientMeta;
+  }): Promise<void> {
+    await this.prisma.loginAttempt.create({
+      data: {
+        userId: input.userId,
+        loginNormalized: input.loginNormalized,
+        success: input.success,
+        reason: input.reason,
+        ip: input.meta.ip,
+        userAgent: input.meta.userAgent,
+      },
+    });
   }
 }
 

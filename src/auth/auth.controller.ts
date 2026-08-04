@@ -11,13 +11,16 @@ import {
   ParseUUIDPipe,
   Post,
   Query,
+  Req,
   UnauthorizedException,
 } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
+import type { Request } from 'express';
 import { AuthService } from './auth.service';
 import { CurrentUser } from './decorators/current-user.decorator';
 import { Public } from './decorators/public.decorator';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
+import { LoginHistoryQueryDto } from './dto/login-history-query.dto';
 import { LoginDto } from './dto/login.dto';
 import { RefreshDto } from './dto/refresh.dto';
 import { RegisterDto } from './dto/register.dto';
@@ -29,6 +32,7 @@ import type { AuthenticatedUser } from './types/authenticated-user.type';
 /**
  * Auth publique : throttle renforcé (anti brute-force / credential stuffing).
  * auth = 10/min ; login encore plus strict (5/min).
+ * Lockout compte (Redis) en complément — voir AuthService.login.
  */
 @Throttle({ auth: { limit: 10, ttl: 60_000 } })
 @Controller('auth')
@@ -45,8 +49,11 @@ export class AuthController {
   @Throttle({ auth: { limit: 5, ttl: 60_000 } })
   @Post('login')
   @HttpCode(HttpStatus.OK)
-  login(@Body() dto: LoginDto) {
-    return this.authService.login(dto);
+  login(@Body() dto: LoginDto, @Req() req: Request) {
+    return this.authService.login(dto, {
+      ip: clientIp(req),
+      userAgent: req.headers['user-agent'],
+    });
   }
 
   /**
@@ -127,6 +134,15 @@ export class AuthController {
     return this.authService.listSessions(user.id);
   }
 
+  /** Historique des tentatives de connexion du compte (Bearer). */
+  @Get('login-history')
+  listLoginHistory(
+    @CurrentUser() user: AuthenticatedUser,
+    @Query() query: LoginHistoryQueryDto,
+  ) {
+    return this.authService.listLoginHistory(user.id, query);
+  }
+
   @Delete('sessions/:sessionId')
   @HttpCode(HttpStatus.NO_CONTENT)
   async revokeSession(
@@ -135,6 +151,17 @@ export class AuthController {
   ): Promise<void> {
     await this.authService.revokeSession(user.id, sessionId);
   }
+}
+
+function clientIp(req: Request): string | undefined {
+  const forwarded = req.headers['x-forwarded-for'];
+  if (typeof forwarded === 'string' && forwarded.length > 0) {
+    return forwarded.split(',')[0]?.trim();
+  }
+  if (Array.isArray(forwarded) && forwarded[0]) {
+    return forwarded[0].split(',')[0]?.trim();
+  }
+  return req.ip;
 }
 
 function nestExceptionMessage(e: unknown): string {

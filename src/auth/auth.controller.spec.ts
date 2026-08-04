@@ -14,7 +14,12 @@ describe('AuthController', () => {
     refresh: jest.Mock;
     logout: jest.Mock;
     listSessions: jest.Mock;
+    listLoginHistory: jest.Mock;
     revokeSession: jest.Mock;
+    verifyEmail: jest.Mock;
+    resendVerification: jest.Mock;
+    forgotPassword: jest.Mock;
+    resetPassword: jest.Mock;
   };
 
   beforeEach(async () => {
@@ -24,7 +29,12 @@ describe('AuthController', () => {
       refresh: jest.fn(),
       logout: jest.fn(),
       listSessions: jest.fn(),
+      listLoginHistory: jest.fn(),
       revokeSession: jest.fn(),
+      verifyEmail: jest.fn(),
+      resendVerification: jest.fn(),
+      forgotPassword: jest.fn(),
+      resetPassword: jest.fn(),
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -54,12 +64,59 @@ describe('AuthController', () => {
     expect(authService.register).toHaveBeenCalledWith(dto);
   });
 
-  it('délègue login au service', async () => {
+  it('délègue login au service avec ip / user-agent', async () => {
     const dto = { login: 'alice', password: 'Password1!' };
     authService.login.mockResolvedValue({ accessToken: 'a' });
+    const req = {
+      ip: '10.0.0.1',
+      headers: {
+        'user-agent': 'HimbaTest/1',
+        'x-forwarded-for': '9.9.9.9, 8.8.8.8',
+      },
+    } as never;
 
-    await expect(controller.login(dto)).resolves.toEqual({ accessToken: 'a' });
-    expect(authService.login).toHaveBeenCalledWith(dto);
+    await expect(controller.login(dto, req)).resolves.toEqual({
+      accessToken: 'a',
+    });
+    expect(authService.login).toHaveBeenCalledWith(dto, {
+      ip: '9.9.9.9',
+      userAgent: 'HimbaTest/1',
+    });
+  });
+
+  it('utilise req.ip si pas de x-forwarded-for', async () => {
+    const dto = { login: 'alice', password: 'Password1!' };
+    authService.login.mockResolvedValue({ accessToken: 'a' });
+    const req = {
+      ip: '10.0.0.1',
+      headers: { 'user-agent': 'HimbaTest/1' },
+    } as never;
+
+    await controller.login(dto, req);
+
+    expect(authService.login).toHaveBeenCalledWith(dto, {
+      ip: '10.0.0.1',
+      userAgent: 'HimbaTest/1',
+    });
+  });
+
+  it('lit le premier x-forwarded-for tableau', async () => {
+    const dto = { login: 'alice', password: 'Password1!' };
+    authService.login.mockResolvedValue({ accessToken: 'a' });
+    const req = {
+      ip: '10.0.0.1',
+      headers: {
+        'user-agent': 'HimbaTest/1',
+        'x-forwarded-for': ['7.7.7.7, 6.6.6.6'],
+      },
+    } as never;
+
+    await controller.login(dto, req);
+
+    expect(authService.login).toHaveBeenCalledWith(dto, {
+      ip: '7.7.7.7',
+      userAgent: 'HimbaTest/1',
+    });
   });
 
   it('délègue refresh au service', async () => {
@@ -97,6 +154,21 @@ describe('AuthController', () => {
     expect(authService.listSessions).toHaveBeenCalledWith('user-1');
   });
 
+  it('liste l’historique de login via le service', async () => {
+    const user = mockAuthenticatedUser();
+    authService.listLoginHistory.mockResolvedValue({
+      items: [],
+      nextCursor: null,
+    });
+
+    await expect(
+      controller.listLoginHistory(user, { limit: 10 }),
+    ).resolves.toEqual({ items: [], nextCursor: null });
+    expect(authService.listLoginHistory).toHaveBeenCalledWith('user-1', {
+      limit: 10,
+    });
+  });
+
   it('révoque une session distante via le service', async () => {
     const user = mockAuthenticatedUser();
     authService.revokeSession.mockResolvedValue(undefined);
@@ -107,5 +179,53 @@ describe('AuthController', () => {
       'user-1',
       'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
     );
+  });
+
+  it('verifyEmailGet rend une page HTML succès', async () => {
+    authService.verifyEmail.mockResolvedValue({ message: 'Email confirmé — ok' });
+
+    const html = await controller.verifyEmailGet('tok');
+
+    expect(html).toContain('Email confirmé');
+    expect(html).toContain('Email confirmé — ok');
+  });
+
+  it('verifyEmailGet rend une page HTML erreur Nest', async () => {
+    authService.verifyEmail.mockRejectedValue(
+      new UnauthorizedException('Lien invalide'),
+    );
+
+    const html = await controller.verifyEmailGet('bad');
+
+    expect(html).toContain('Lien invalide');
+  });
+
+  it('resetPasswordGet rend le formulaire HTML', () => {
+    const html = controller.resetPasswordGet('abc&<>');
+    expect(html).toContain('Nouveau mot de passe');
+    expect(html).toContain('abc&amp;&lt;&gt;');
+  });
+
+  it('délègue verifyEmailPost / resend / forgot / reset', async () => {
+    authService.verifyEmail.mockResolvedValue({ message: 'ok' });
+    authService.resendVerification.mockResolvedValue({ message: 'ok' });
+    authService.forgotPassword.mockResolvedValue({ message: 'ok' });
+    authService.resetPassword.mockResolvedValue({ message: 'ok' });
+
+    await expect(
+      controller.verifyEmailPost({ token: 't' }),
+    ).resolves.toEqual({ message: 'ok' });
+    await expect(
+      controller.resendVerification({ email: 'a@b.com' }),
+    ).resolves.toEqual({ message: 'ok' });
+    await expect(
+      controller.forgotPassword({ email: 'a@b.com' }),
+    ).resolves.toEqual({ message: 'ok' });
+    await expect(
+      controller.resetPasswordPost({
+        token: 't',
+        newPassword: 'Password1!',
+      }),
+    ).resolves.toEqual({ message: 'ok' });
   });
 });
