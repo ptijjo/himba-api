@@ -42,6 +42,7 @@ export class AuthService {
   private readonly refreshExpiresIn: string;
   private readonly bcryptRounds: number;
   private readonly emailVerifyTtlSeconds: number;
+  private readonly resetPasswordTtlSeconds: number;
   private readonly apiPublicUrl: string;
 
   constructor(
@@ -74,6 +75,10 @@ export class AuthService {
       this.configService.get<string | number>('EMAIL_VERIFY_TTL_HOURS', 48),
     );
     this.emailVerifyTtlSeconds = Math.max(1, ttlHours) * 3600;
+    const resetHours = Number(
+      this.configService.get<string | number>('RESET_PASSWORD_TTL_HOURS', 1),
+    );
+    this.resetPasswordTtlSeconds = Math.max(1, resetHours) * 3600;
     this.apiPublicUrl = (
       this.configService.get<string>('API_PUBLIC_URL') ??
       'http://localhost:8989'
@@ -189,6 +194,67 @@ export class AuthService {
 
     await this.sendVerificationEmail(user);
     return { message: okMessage };
+  }
+
+  /**
+   * Mot de passe oublié : envoi un lien reset si compte existant + email vérifié.
+   * Réponse neutre pour éviter l'énumération des comptes.
+   */
+  async forgotPassword(emailRaw: string): Promise<{ message: string }> {
+    const email = emailRaw.trim().toLowerCase();
+    const user = await this.prisma.user.findUnique({ where: { email } });
+    const okMessage =
+      'Si un compte existe, un email de réinitialisation a été envoyé.';
+
+    if (!user || !user.emailVerifiedAt || user.status === UserStatus.BANNED) {
+      return { message: okMessage };
+    }
+
+    await this.sendResetPasswordEmail(user);
+    return { message: okMessage };
+  }
+
+  /**
+   * Consomme un token reset (usage unique, TTL court), puis met à jour le mot de passe.
+   */
+  async resetPassword(
+    rawToken: string,
+    newPassword: string,
+  ): Promise<{ message: string }> {
+    const token = rawToken?.trim();
+    if (!token) {
+      throw new BadRequestException('Lien de réinitialisation invalide');
+    }
+
+    const userId = await this.redis.get(this.resetPasswordKey(token));
+    if (!userId) {
+      throw new BadRequestException(
+        'Lien invalide ou expiré — redemande un email de réinitialisation',
+      );
+    }
+
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) {
+      await this.redis.del(this.resetPasswordKey(token));
+      throw new BadRequestException('Compte introuvable');
+    }
+    if (user.status === UserStatus.BANNED) {
+      await this.redis.del(this.resetPasswordKey(token));
+      throw new ForbiddenException('Compte banni');
+    }
+
+    const passwordHash = await bcrypt.hash(newPassword, this.bcryptRounds);
+    await this.prisma.user.update({
+      where: { id: user.id },
+      data: { passwordHash },
+    });
+
+    await this.redis.del(this.resetPasswordKey(token));
+    await this.revokeAllSessions(user.id);
+
+    return {
+      message: 'Mot de passe mis à jour — reconnecte-toi dans l’application.',
+    };
   }
 
   async refresh(dto: RefreshDto): Promise<AuthTokensResponse> {
@@ -481,10 +547,42 @@ export class AuthService {
     });
   }
 
+  private async sendResetPasswordEmail(user: User): Promise<void> {
+    const rawToken = randomBytes(32).toString('hex');
+    const redisKey = this.resetPasswordKey(rawToken);
+    await this.redis.set(redisKey, user.id, this.resetPasswordTtlSeconds);
+
+    const link = `${this.apiPublicUrl}/auth/reset-password?token=${rawToken}`;
+    const hours = Math.round(this.resetPasswordTtlSeconds / 3600);
+
+    await this.mailService.send({
+      to: user.email,
+      subject: 'Himba — réinitialise ton mot de passe',
+      text: `Bonjour ${user.username},\n\nTu as demandé la réinitialisation de ton mot de passe Himba.\n\nOuvre ce lien (valable ${hours} h) :\n${link}\n\nSi tu n’es pas à l’origine de cette demande, ignore ce message.`,
+      html: `<p>Bonjour <strong>${escapeHtml(user.username)}</strong>,</p>
+<p>Tu as demandé la réinitialisation de ton mot de passe Himba.</p>
+<p><a href="${link}">Choisir un nouveau mot de passe</a></p>
+<p>Ce lien est valable <strong>${hours} heure(s)</strong>.</p>
+<p>Si tu n’es pas à l’origine de cette demande, ignore ce message.</p>`,
+    });
+  }
+
   private emailVerifyKey(rawToken: string): string {
     // Hash du token en clé Redis — fuite DB Redis ≠ token brut réutilisable facilement
     const digest = createHash('sha256').update(rawToken).digest('hex');
     return `email-verify:${digest}`;
+  }
+
+  private resetPasswordKey(rawToken: string): string {
+    const digest = createHash('sha256').update(rawToken).digest('hex');
+    return `password-reset:${digest}`;
+  }
+
+  private async revokeAllSessions(userId: string): Promise<void> {
+    const sessionIds = await this.redis.smembers(this.sessionsIndexKey(userId));
+    for (const sessionId of sessionIds) {
+      await this.revokeSessionInternal(userId, sessionId);
+    }
   }
 
   private toAuthUser(user: User): AuthUserResponse {

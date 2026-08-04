@@ -17,10 +17,12 @@ import { Throttle } from '@nestjs/throttler';
 import { AuthService } from './auth.service';
 import { CurrentUser } from './decorators/current-user.decorator';
 import { Public } from './decorators/public.decorator';
+import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { LoginDto } from './dto/login.dto';
 import { RefreshDto } from './dto/refresh.dto';
 import { RegisterDto } from './dto/register.dto';
 import { ResendVerificationDto } from './dto/resend-verification.dto';
+import { ResetPasswordDto } from './dto/reset-password.dto';
 import { VerifyEmailDto } from './dto/verify-email.dto';
 import type { AuthenticatedUser } from './types/authenticated-user.type';
 
@@ -74,6 +76,33 @@ export class AuthController {
   @HttpCode(HttpStatus.OK)
   resendVerification(@Body() dto: ResendVerificationDto) {
     return this.authService.resendVerification(dto.email);
+  }
+
+  /**
+   * Demande de reset mot de passe (email envoyé si compte existant).
+   */
+  @Public()
+  @Post('forgot-password')
+  @HttpCode(HttpStatus.OK)
+  forgotPassword(@Body() dto: ForgotPasswordDto) {
+    return this.authService.forgotPassword(dto.email);
+  }
+
+  /**
+   * Lien email (GET) — page HTML simple avec formulaire de nouveau mot de passe.
+   */
+  @Public()
+  @Get('reset-password')
+  @Header('Content-Type', 'text/html; charset=utf-8')
+  resetPasswordGet(@Query('token') token?: string): string {
+    return renderResetPasswordHtml(token ?? '');
+  }
+
+  @Public()
+  @Post('reset-password')
+  @HttpCode(HttpStatus.OK)
+  resetPasswordPost(@Body() dto: ResetPasswordDto) {
+    return this.authService.resetPassword(dto.token, dto.newPassword);
   }
 
   @Public()
@@ -173,6 +202,97 @@ function renderVerifyHtml(ok: boolean, message: string): string {
     <p>${safe}</p>
     ${nextSteps}
   </div>
+</body>
+</html>`;
+}
+
+function renderResetPasswordHtml(rawToken: string): string {
+  const token = rawToken
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+
+  return `<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Nouveau mot de passe — Himba</title>
+  <style>
+    body { font-family: system-ui, sans-serif; background: #0B0618; color: #F5F0FF;
+      display: flex; min-height: 100vh; align-items: center; justify-content: center; margin: 0; padding: 24px; }
+    .card { width: 100%; max-width: 440px; background: #1E1730; border-radius: 16px; padding: 28px; }
+    h1 { color: #E85D04; font-size: 1.3rem; margin: 0 0 12px; text-align: center; }
+    p { margin: 0 0 12px; line-height: 1.5; opacity: 0.9; }
+    label { display: block; font-size: 0.95rem; margin: 12px 0 6px; }
+    input { width: 100%; box-sizing: border-box; border-radius: 10px; border: 1px solid #5A4A7A;
+      background: #120B23; color: #F5F0FF; padding: 12px; font-size: 1rem; }
+    button { margin-top: 16px; width: 100%; border: 0; border-radius: 999px; background: #E85D04;
+      color: #F5F0FF; font-size: 1rem; font-weight: 700; padding: 12px 16px; cursor: pointer; }
+    .msg { margin-top: 12px; font-size: 0.92rem; }
+    .err { color: #FF6B7A; }
+    .ok { color: #F5F0FF; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Nouveau mot de passe</h1>
+    <p>Choisis un nouveau mot de passe (8+ caractères, majuscule, minuscule, chiffre et symbole).</p>
+    <form id="form">
+      <input type="hidden" id="token" value="${token}" />
+      <label for="password">Nouveau mot de passe</label>
+      <input id="password" type="password" autocomplete="new-password" required />
+      <label for="confirm">Confirmer le mot de passe</label>
+      <input id="confirm" type="password" autocomplete="new-password" required />
+      <button type="submit">Mettre à jour mon mot de passe</button>
+      <div id="msg" class="msg"></div>
+    </form>
+  </div>
+  <script>
+    const form = document.getElementById('form');
+    const msg = document.getElementById('msg');
+    const token = document.getElementById('token');
+    const password = document.getElementById('password');
+    const confirm = document.getElementById('confirm');
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      msg.className = 'msg err';
+      msg.textContent = '';
+
+      if (!token.value) {
+        msg.textContent = 'Lien invalide ou incomplet.';
+        return;
+      }
+      if (password.value !== confirm.value) {
+        msg.textContent = 'Les mots de passe ne correspondent pas.';
+        return;
+      }
+
+      try {
+        const res = await fetch('/auth/reset-password', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            token: token.value,
+            newPassword: password.value,
+          }),
+        });
+        const data = await res.json().catch(() => ({ message: 'Mot de passe mis à jour.' }));
+        if (!res.ok) {
+          const message = Array.isArray(data?.message) ? data.message[0] : data?.message;
+          msg.textContent = message || 'Mise à jour impossible.';
+          return;
+        }
+        msg.className = 'msg ok';
+        msg.textContent = 'Mot de passe mis à jour. Retourne dans l’app Himba pour te connecter.';
+        form.reset();
+      } catch {
+        msg.textContent = 'Erreur réseau. Réessaie.';
+      }
+    });
+  </script>
 </body>
 </html>`;
 }

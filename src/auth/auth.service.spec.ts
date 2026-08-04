@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ConflictException,
   ForbiddenException,
   UnauthorizedException,
@@ -377,6 +378,82 @@ describe('AuthService', () => {
       await expect(
         service.refresh({ refreshToken: 'tok' }),
       ).rejects.toBeInstanceOf(ForbiddenException);
+    });
+  });
+
+  describe('forgotPassword', () => {
+    it('renvoie un message neutre si compte inconnu', async () => {
+      prisma.user.findUnique.mockResolvedValue(null);
+
+      const result = await service.forgotPassword('unknown@example.com');
+
+      expect(result.message).toContain('Si un compte existe');
+      expect(mailService.send).not.toHaveBeenCalled();
+    });
+
+    it('envoie un email reset si compte vérifié', async () => {
+      prisma.user.findUnique.mockResolvedValue(baseUser);
+
+      const result = await service.forgotPassword(baseUser.email);
+
+      expect(result.message).toContain('Si un compte existe');
+      expect(mailService.send).toHaveBeenCalled();
+      expect(redis.set).toHaveBeenCalled();
+    });
+  });
+
+  describe('resetPassword', () => {
+    it('met à jour le hash + révoque toutes les sessions', async () => {
+      redis.get.mockResolvedValue(baseUser.id);
+      prisma.user.findUnique.mockResolvedValue(baseUser);
+      redis.smembers.mockResolvedValue(['s1', 's2']);
+      redis.getJson.mockImplementation(async (key: string) => {
+        if (key === 'session:user-1:s1') {
+          return {
+            sessionId: 's1',
+            jti: 'j1',
+            userId: 'user-1',
+            createdAt: nowIso,
+            lastActiveAt: nowIso,
+          };
+        }
+        if (key === 'session:user-1:s2') {
+          return {
+            sessionId: 's2',
+            jti: 'j2',
+            userId: 'user-1',
+            createdAt: nowIso,
+            lastActiveAt: nowIso,
+          };
+        }
+        return null;
+      });
+      prisma.user.update.mockResolvedValue(baseUser);
+
+      const result = await service.resetPassword('token-reset', 'Password1!');
+
+      expect(result.message).toContain('Mot de passe mis à jour');
+      expect(bcrypt.hash).toHaveBeenCalledWith('Password1!', 14);
+      expect(prisma.user.update).toHaveBeenCalledWith({
+        where: { id: 'user-1' },
+        data: { passwordHash: 'hashed-password' },
+      });
+      expect(redis.del).toHaveBeenCalledWith(
+        'refresh:user-1:j1',
+        'session:user-1:s1',
+      );
+      expect(redis.del).toHaveBeenCalledWith(
+        'refresh:user-1:j2',
+        'session:user-1:s2',
+      );
+    });
+
+    it('lève BadRequestException si token expiré/invalide', async () => {
+      redis.get.mockResolvedValue(null);
+
+      await expect(
+        service.resetPassword('expired-token', 'Password1!'),
+      ).rejects.toBeInstanceOf(BadRequestException);
     });
   });
 
