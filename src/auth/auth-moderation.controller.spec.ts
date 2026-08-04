@@ -61,9 +61,19 @@ describe('AuthModerationController', () => {
   });
 
   it('rend la page HTML moniteur', () => {
-    const html = controller.securityMonitorPage();
-    expect(html).toContain('Moniteur sécurité auth');
-    expect(html).toContain('/moderation/login-locks');
+    const chunks: string[] = [];
+    const res = {
+      status: jest.fn().mockReturnThis(),
+      setHeader: jest.fn().mockReturnThis(),
+      send: jest.fn((html: string) => {
+        chunks.push(html);
+        return res;
+      }),
+    };
+    controller.securityMonitorPage(res as never);
+    expect(res.status).toHaveBeenCalledWith(200);
+    expect(chunks[0]).toContain('Moniteur sécurité auth');
+    expect(chunks[0]).toContain('/moderation/login-locks');
     expect(UserRole.ADMIN).toBe('ADMIN');
   });
 });
