@@ -200,13 +200,34 @@ describe('AuthController', () => {
     expect(html).toContain('Lien invalide');
   });
 
-  it('resetPasswordGet rend le formulaire HTML', () => {
-    const html = controller.resetPasswordGet('abc&<>');
-    expect(html).toContain('Nouveau mot de passe');
-    expect(html).toContain('abc&amp;&lt;&gt;');
+  it('resetPasswordGet rend le formulaire HTML avec CSP scripts inline', () => {
+    const res = mockHtmlRes();
+    controller.resetPasswordGet('abc&<>', res);
+
+    expect(res.setHeader).toHaveBeenCalledWith(
+      'Content-Type',
+      'text/html; charset=utf-8',
+    );
+    expect(res.setHeader).toHaveBeenCalledWith(
+      'Content-Security-Policy',
+      expect.stringContaining("script-src 'self' 'unsafe-inline'"),
+    );
+    expect(res.send).toHaveBeenCalledWith(
+      expect.stringContaining('Nouveau mot de passe'),
+    );
+    expect(res.send).toHaveBeenCalledWith(
+      expect.stringContaining('abc&amp;&lt;&gt;'),
+    );
+    // Fallback sans JS : POST form urlencoded (Helmet CSP ne doit plus bloquer le reset)
+    expect(res.send).toHaveBeenCalledWith(
+      expect.stringContaining('method="POST"'),
+    );
+    expect(res.send).toHaveBeenCalledWith(
+      expect.stringContaining('name="newPassword"'),
+    );
   });
 
-  it('délègue verifyEmailPost / resend / forgot / reset', async () => {
+  it('délègue verifyEmailPost / resend / forgot / reset JSON', async () => {
     authService.verifyEmail.mockResolvedValue({ message: 'ok' });
     authService.resendVerification.mockResolvedValue({ message: 'ok' });
     authService.forgotPassword.mockResolvedValue({ message: 'ok' });
@@ -221,11 +242,87 @@ describe('AuthController', () => {
     await expect(
       controller.forgotPassword({ email: 'a@b.com' }),
     ).resolves.toEqual({ message: 'ok' });
+
+    const jsonReq = {
+      headers: {
+        accept: 'application/json',
+        'content-type': 'application/json',
+      },
+    } as never;
+    const jsonRes = mockHtmlRes();
     await expect(
-      controller.resetPasswordPost({
-        token: 't',
-        newPassword: 'Password1!',
-      }),
+      controller.resetPasswordPost(
+        { token: 't', newPassword: 'Password1!' },
+        jsonReq,
+        jsonRes,
+      ),
     ).resolves.toEqual({ message: 'ok' });
   });
+
+  it('resetPasswordPost formulaire HTML renvoie une page succès', async () => {
+    authService.resetPassword.mockResolvedValue({
+      message: 'Mot de passe mis à jour',
+    });
+    const req = {
+      headers: {
+        accept: 'text/html',
+        'content-type': 'application/x-www-form-urlencoded',
+      },
+    } as never;
+    const res = mockHtmlRes();
+
+    const html = await controller.resetPasswordPost(
+      {
+        token: 'tok',
+        newPassword: 'Password1!',
+        confirmPassword: 'Password1!',
+      },
+      req,
+      res,
+    );
+
+    expect(authService.resetPassword).toHaveBeenCalledWith('tok', 'Password1!');
+    expect(res.setHeader).toHaveBeenCalledWith(
+      'Content-Security-Policy',
+      expect.stringContaining("script-src 'self' 'unsafe-inline'"),
+    );
+    expect(html).toContain('Mot de passe mis à jour');
+  });
+
+  it('resetPasswordPost HTML refuse confirmPassword différent', async () => {
+    const req = {
+      headers: {
+        accept: 'text/html',
+        'content-type': 'application/x-www-form-urlencoded',
+      },
+    } as never;
+    const res = mockHtmlRes();
+
+    const html = await controller.resetPasswordPost(
+      {
+        token: 'tok',
+        newPassword: 'Password1!',
+        confirmPassword: 'OtherPass1!',
+      },
+      req,
+      res,
+    );
+
+    expect(authService.resetPassword).not.toHaveBeenCalled();
+    expect(html).toContain('ne correspondent pas');
+  });
 });
+
+function mockHtmlRes(): {
+  status: jest.Mock;
+  setHeader: jest.Mock;
+  send: jest.Mock;
+} {
+  const res = {
+    status: jest.fn(),
+    setHeader: jest.fn(),
+    send: jest.fn(),
+  };
+  res.status.mockReturnValue(res);
+  return res;
+}

@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
@@ -12,10 +13,11 @@ import {
   Post,
   Query,
   Req,
+  Res,
   UnauthorizedException,
 } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
-import type { Request } from 'express';
+import type { Request, Response } from 'express';
 import { AuthService } from './auth.service';
 import { CurrentUser } from './decorators/current-user.decorator';
 import { Public } from './decorators/public.decorator';
@@ -29,6 +31,10 @@ import { ResendVerificationDto } from './dto/resend-verification.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
 import { VerifyEmailDto } from './dto/verify-email.dto';
 import type { AuthenticatedUser } from './types/authenticated-user.type';
+
+/** CSP pages HTML auth (styles + script inline) — override Helmet prod qui bloque sinon. */
+const AUTH_HTML_CSP =
+  "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data:";
 
 /**
  * Auth publique : throttle renforcé (anti brute-force / credential stuffing).
@@ -98,19 +104,64 @@ export class AuthController {
 
   /**
    * Lien email (GET) — page HTML simple avec formulaire de nouveau mot de passe.
+   * CSP locale : Helmet en prod bloque les scripts inline → le fetch JS ne partait jamais,
+   * donc le hash n’était pas mis à jour (login « Identifiants invalides » après reset).
    */
   @Public()
   @Get('reset-password')
-  @Header('Content-Type', 'text/html; charset=utf-8')
-  resetPasswordGet(@Query('token') token?: string): string {
-    return renderResetPasswordHtml(token ?? '');
+  resetPasswordGet(
+    @Query('token') token: string | undefined,
+    @Res() res: Response,
+  ): void {
+    sendAuthHtml(res, renderResetPasswordHtml(token ?? ''));
   }
 
+  /**
+   * Reset MDP — JSON (app / fetch) ou formulaire HTML (POST urlencoded sans JS).
+   */
   @Public()
   @Post('reset-password')
   @HttpCode(HttpStatus.OK)
-  resetPasswordPost(@Body() dto: ResetPasswordDto) {
-    return this.authService.resetPassword(dto.token, dto.newPassword);
+  async resetPasswordPost(
+    @Body() dto: ResetPasswordDto,
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+  ): Promise<string | { message: string }> {
+    const wantsHtml = prefersAuthHtml(req);
+
+    // 1. Confirm côté formulaire email (optionnel pour clients JSON)
+    if (
+      dto.confirmPassword !== undefined &&
+      dto.confirmPassword !== dto.newPassword
+    ) {
+      if (wantsHtml) {
+        setAuthHtmlHeaders(res);
+        return renderResetPasswordHtml(
+          dto.token,
+          'Les mots de passe ne correspondent pas.',
+        );
+      }
+      throw new BadRequestException('Les mots de passe ne correspondent pas.');
+    }
+
+    // 2. Consommer le token Redis + hasher le nouveau mot de passe
+    try {
+      const result = await this.authService.resetPassword(
+        dto.token,
+        dto.newPassword,
+      );
+      if (wantsHtml) {
+        setAuthHtmlHeaders(res);
+        return renderResetPasswordSuccessHtml();
+      }
+      return result;
+    } catch (e) {
+      if (wantsHtml) {
+        setAuthHtmlHeaders(res);
+        return renderResetPasswordHtml(dto.token, nestExceptionMessage(e));
+      }
+      throw e;
+    }
   }
 
   /**
@@ -183,6 +234,29 @@ function clientIp(req: Request): string | undefined {
   return req.ip;
 }
 
+function prefersAuthHtml(req: Request): boolean {
+  const contentType = String(req.headers['content-type'] ?? '').toLowerCase();
+  if (contentType.includes('application/x-www-form-urlencoded')) {
+    return true;
+  }
+  if (contentType.includes('multipart/form-data')) {
+    return true;
+  }
+  const accept = String(req.headers.accept ?? '').toLowerCase();
+  return accept.includes('text/html') && !accept.includes('application/json');
+}
+
+function setAuthHtmlHeaders(res: Response): void {
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.setHeader('Content-Security-Policy', AUTH_HTML_CSP);
+}
+
+function sendAuthHtml(res: Response, html: string): void {
+  res.status(HttpStatus.OK);
+  setAuthHtmlHeaders(res);
+  res.send(html);
+}
+
 function nestExceptionMessage(e: unknown): string {
   if (e instanceof HttpException) {
     const res = e.getResponse();
@@ -252,12 +326,65 @@ function renderVerifyHtml(ok: boolean, message: string): string {
 </html>`;
 }
 
-function renderResetPasswordHtml(rawToken: string): string {
-  const token = rawToken
+function escapeHtmlAttr(raw: string): string {
+  return raw
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
+}
+
+function escapeHtmlText(raw: string): string {
+  return raw
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+function renderResetPasswordSuccessHtml(): string {
+  return `<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Mot de passe mis à jour — Himba</title>
+  <style>
+    body { font-family: system-ui, sans-serif; background: #0B0618; color: #F5F0FF;
+      display: flex; min-height: 100vh; align-items: center; justify-content: center; margin: 0; padding: 24px; }
+    .card { width: 100%; max-width: 440px; background: #1E1730; border-radius: 16px; padding: 28px; text-align: center; }
+    h1 { color: #E85D04; font-size: 1.3rem; margin: 0 0 12px; }
+    p { margin: 0 0 12px; line-height: 1.5; opacity: 0.9; }
+    .btn { margin-top: 16px; display: inline-block; width: 100%; box-sizing: border-box; border: 0;
+      border-radius: 999px; background: #E85D04; color: #F5F0FF; font-size: 1rem; font-weight: 700;
+      padding: 12px 16px; cursor: pointer; text-decoration: none; text-align: center; }
+    ol { text-align: left; margin: 16px 0 0; padding-left: 1.2rem; line-height: 1.6; opacity: 0.92; font-size: 0.95rem; }
+    .hint { margin-top: 14px; font-size: 0.85rem; opacity: 0.65; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Mot de passe mis à jour</h1>
+    <p>Ton nouveau mot de passe est enregistré. Le lien de réinitialisation n’est plus utilisable.</p>
+    <ol>
+      <li>Ouvre l’application <strong>Himba</strong></li>
+      <li>Va sur <strong>Se connecter</strong></li>
+      <li>Entre ton email (ou pseudo) et ton <strong>nouveau</strong> mot de passe</li>
+    </ol>
+    <a class="btn" href="himba://login">Ouvrir Himba</a>
+    <p class="hint">Si le bouton ne fonctionne pas, ouvre Himba manuellement puis connecte-toi. Tu peux fermer cette page.</p>
+  </div>
+</body>
+</html>`;
+}
+
+function renderResetPasswordHtml(
+  rawToken: string,
+  errorMessage?: string,
+): string {
+  const token = escapeHtmlAttr(rawToken);
+  const err = errorMessage
+    ? `<div id="msg" class="msg err">${escapeHtmlText(errorMessage)}</div>`
+    : `<div id="msg" class="msg"></div>`;
 
   return `<!DOCTYPE html>
 <html lang="fr">
@@ -290,14 +417,15 @@ function renderResetPasswordHtml(rawToken: string): string {
     <div id="formPanel">
       <h1>Nouveau mot de passe</h1>
       <p>Choisis un nouveau mot de passe (8+ caractères, majuscule, minuscule, chiffre et symbole).</p>
-      <form id="form">
-        <input type="hidden" id="token" value="${token}" />
+      <!-- method+name : fallback si le JS est bloqué (CSP) — le POST urlencoded met bien à jour le hash -->
+      <form id="form" method="POST" action="/auth/reset-password">
+        <input type="hidden" id="token" name="token" value="${token}" />
         <label for="password">Nouveau mot de passe</label>
-        <input id="password" type="password" autocomplete="new-password" required />
+        <input id="password" name="newPassword" type="password" autocomplete="new-password" required />
         <label for="confirm">Confirmer le mot de passe</label>
-        <input id="confirm" type="password" autocomplete="new-password" required />
+        <input id="confirm" name="confirmPassword" type="password" autocomplete="new-password" required />
         <button type="submit">Mettre à jour mon mot de passe</button>
-        <div id="msg" class="msg"></div>
+        ${err}
       </form>
     </div>
     <div id="successPanel" class="hidden">
@@ -338,10 +466,14 @@ function renderResetPasswordHtml(rawToken: string): string {
       try {
         const res = await fetch('/auth/reset-password', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            'Accept': 'application/json',
+          },
           body: JSON.stringify({
             token: token.value,
             newPassword: password.value,
+            confirmPassword: confirm.value,
           }),
         });
         const data = await res.json().catch(() => ({ message: 'Mot de passe mis à jour.' }));

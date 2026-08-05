@@ -1,4 +1,10 @@
-import { IsString, IsStrongPassword, MaxLength, MinLength } from 'class-validator';
+import {
+  IsOptional,
+  IsString,
+  IsStrongPassword,
+  MaxLength,
+  MinLength,
+} from 'class-validator';
 
 export class ResetPasswordDto {
   @IsString()
@@ -21,5 +27,10 @@ export class ResetPasswordDto {
     },
   )
   newPassword!: string;
+
+  /** Formulaire HTML email uniquement — optionnel pour clients JSON. */
+  @IsOptional()
+  @IsString()
+  confirmPassword?: string;
 }
 
