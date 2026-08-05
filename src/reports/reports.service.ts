@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   Injectable,
   Logger,
   NotFoundException,
@@ -10,11 +11,14 @@ import {
   ReportReason,
   ReportStatus,
   ReportTargetType,
+  UserRole,
+  UserStatus,
 } from '../generated/prisma/client';
 import { parseLimit } from '../common/pagination/cursor.dto';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
 import type { CreateReportDto } from './dto/create-report.dto';
+import { ReportSanction } from './report-sanction';
 
 @Injectable()
 export class ReportsService {
@@ -73,11 +77,34 @@ export class ReportsService {
   async updateStatus(
     id: string,
     status: ReportStatus,
-    moderatorNote?: string,
+    options?: {
+      moderatorNote?: string;
+      sanction?: ReportSanction;
+    },
   ) {
     const row = await this.prisma.report.findUnique({ where: { id } });
     if (!row) {
       throw new NotFoundException('Signalement introuvable');
+    }
+
+    if (status === ReportStatus.RESOLVED && !options?.sanction) {
+      throw new BadRequestException(
+        'Une sanction est requise pour résoudre un signalement',
+      );
+    }
+
+    const reportedUserId = await this.resolveReportedUserId(
+      row.targetType,
+      row.targetId,
+    );
+
+    if (
+      status === ReportStatus.RESOLVED &&
+      reportedUserId &&
+      (options?.sanction === ReportSanction.RESTRICTED ||
+        options?.sanction === ReportSanction.BANNED)
+    ) {
+      await this.applyAccountSanction(reportedUserId, options.sanction);
     }
 
     const updated = await this.prisma.report.update({
@@ -85,17 +112,18 @@ export class ReportsService {
       data: { status },
     });
 
-    // Notifier l’auteur seulement si le statut change (hors OPEN)
     if (row.status !== status && status !== ReportStatus.OPEN) {
       try {
         await this.notifications.notifyReportStatusUpdate({
           reporterId: row.reporterId,
+          reportedUserId,
           reportId: row.id,
           status,
           targetType: row.targetType,
           targetId: row.targetId,
           reason: row.reason,
-          moderatorNote,
+          sanction: options?.sanction,
+          moderatorNote: options?.moderatorNote,
         });
       } catch (err) {
         this.logger.warn(
@@ -107,6 +135,65 @@ export class ReportsService {
     }
 
     return updated;
+  }
+
+  /** User propriétaire de la cible (titre → artiste.user, artiste → user, user → id). */
+  private async resolveReportedUserId(
+    targetType: ReportTargetType,
+    targetId: string,
+  ): Promise<string | null> {
+    switch (targetType) {
+      case ReportTargetType.USER:
+        return targetId;
+      case ReportTargetType.ARTIST: {
+        const artist = await this.prisma.artist.findUnique({
+          where: { id: targetId },
+          select: { userId: true },
+        });
+        return artist?.userId ?? null;
+      }
+      case ReportTargetType.TRACK: {
+        const track = await this.prisma.track.findUnique({
+          where: { id: targetId },
+          select: { artist: { select: { userId: true } } },
+        });
+        return track?.artist.userId ?? null;
+      }
+      case ReportTargetType.ALBUM: {
+        const album = await this.prisma.album.findUnique({
+          where: { id: targetId },
+          select: { artist: { select: { userId: true } } },
+        });
+        return album?.artist.userId ?? null;
+      }
+      default: {
+        const _exhaustive: never = targetType;
+        throw new BadRequestException(`Type invalide: ${_exhaustive}`);
+      }
+    }
+  }
+
+  private async applyAccountSanction(
+    userId: string,
+    sanction: ReportSanction.RESTRICTED | ReportSanction.BANNED,
+  ): Promise<void> {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) {
+      return;
+    }
+    if (user.role === UserRole.ADMIN) {
+      throw new ForbiddenException(
+        'Impossible d’appliquer une sanction au compte administrateur',
+      );
+    }
+    const status =
+      sanction === ReportSanction.BANNED
+        ? UserStatus.BANNED
+        : UserStatus.RESTRICTED;
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { status },
+    });
   }
 
   private async assertTargetExists(
@@ -121,6 +208,16 @@ export class ReportsService {
         });
         if (!track) {
           throw new NotFoundException('Titre introuvable');
+        }
+        return;
+      }
+      case ReportTargetType.ALBUM: {
+        const album = await this.prisma.album.findUnique({
+          where: { id: targetId },
+          select: { id: true },
+        });
+        if (!album) {
+          throw new NotFoundException('Album introuvable');
         }
         return;
       }
@@ -179,6 +276,16 @@ export class ReportsService {
         });
         if (track?.artist.userId === reporterId) {
           throw new BadRequestException('Tu ne peux pas signaler ton titre');
+        }
+        return;
+      }
+      case ReportTargetType.ALBUM: {
+        const album = await this.prisma.album.findUnique({
+          where: { id: targetId },
+          select: { artist: { select: { userId: true } } },
+        });
+        if (album?.artist.userId === reporterId) {
+          throw new BadRequestException('Tu ne peux pas signaler ton album');
         }
         return;
       }

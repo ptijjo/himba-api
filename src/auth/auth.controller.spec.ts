@@ -55,6 +55,7 @@ describe('AuthController', () => {
       email: 'a@b.com',
       username: 'alice',
       password: 'Password1!',
+      role: 'LISTENER' as const,
     };
     authService.register.mockResolvedValue({ accessToken: 'a' });
 

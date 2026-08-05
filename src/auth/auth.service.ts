@@ -119,23 +119,45 @@ export class AuthService {
 
   /**
    * Inscription : crée le user (email non vérifié), envoie le lien Mailjet.
+   * ARTIST → profil Artist avec displayName = username (recherche unifiée).
    * Pas de session / tokens tant que l’email n’est pas confirmé.
    */
   async register(dto: RegisterDto): Promise<AuthRegisterPendingResponse> {
     const email = dto.email.trim().toLowerCase();
     const username = dto.username.trim();
+    const role =
+      dto.role === UserRole.ARTIST ? UserRole.ARTIST : UserRole.LISTENER;
+
+    if (role === UserRole.ARTIST && dto.acceptArtistTerms !== true) {
+      throw new BadRequestException(
+        'Tu dois accepter les conditions artiste pour t’inscrire en artiste',
+      );
+    }
 
     await this.assertCanClaimIdentity(email, username);
 
     const passwordHash = await bcrypt.hash(dto.password, this.bcryptRounds);
-    const user = await this.prisma.user.create({
-      data: {
-        email,
-        username,
-        passwordHash,
-        role: UserRole.LISTENER,
-        emailVerifiedAt: null,
-      },
+
+    // 1. User · 2. Si artiste → Artist (displayName = pseudo)
+    const user = await this.prisma.$transaction(async (tx) => {
+      const created = await tx.user.create({
+        data: {
+          email,
+          username,
+          passwordHash,
+          role,
+          emailVerifiedAt: null,
+        },
+      });
+      if (role === UserRole.ARTIST) {
+        await tx.artist.create({
+          data: {
+            userId: created.id,
+            displayName: username,
+          },
+        });
+      }
+      return created;
     });
 
     await this.sendVerificationEmail(user);

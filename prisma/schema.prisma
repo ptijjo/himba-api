@@ -26,11 +26,13 @@ enum NotificationType {
   ALBUM_RELEASE
   NEW_FOLLOWER
   REPORT_UPDATE
+  REPORT_SANCTION
 }
 
 /** Cible d’un signalement utilisateur. */
 enum ReportTargetType {
   TRACK
+  ALBUM
   ARTIST
   USER
 }

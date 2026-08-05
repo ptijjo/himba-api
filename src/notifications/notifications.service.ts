@@ -8,6 +8,10 @@ import {
 } from '../generated/prisma/client';
 import { parseLimit } from '../common/pagination/cursor.dto';
 import { PrismaService } from '../prisma/prisma.service';
+import {
+  ReportSanction,
+  REPORT_SANCTION_TARGET_BODY,
+} from '../reports/report-sanction';
 
 /** Payload JSON stocké / envoyé en push — champs selon le type. */
 export type NotifyData = {
@@ -21,6 +25,8 @@ export type NotifyData = {
   targetType?: ReportTargetType;
   targetId?: string;
   reason?: ReportReason;
+  sanction?: ReportSanction;
+  audience?: 'reporter' | 'target';
 };
 
 export type NotifyPayload = {
@@ -35,24 +41,6 @@ export type ReleaseNotifyPayload = NotifyPayload;
 
 const EXPO_PUSH_URL = 'https://exp.host/--/api/v2/push/send';
 const PUSH_CHUNK = 100;
-
-const REPORT_STATUS_NOTIF: Record<
-  Exclude<ReportStatus, 'OPEN'>,
-  { title: string; body: string }
-> = {
-  REVIEWING: {
-    title: 'Signalement en cours d’examen',
-    body: 'L’équipe Himba examine ton signalement. On te tiendra au courant.',
-  },
-  RESOLVED: {
-    title: 'Signalement traité',
-    body: 'Ton signalement a été traité. Merci d’avoir aidé à garder Himba sûr.',
-  },
-  DISMISSED: {
-    title: 'Signalement classé',
-    body: 'Ton signalement a été examiné et classé sans suite pour le moment.',
-  },
-};
 
 
 @Injectable()
@@ -194,44 +182,153 @@ export class NotificationsService {
   }
 
   /**
-   * Notifie l’auteur d’un signalement du nouveau statut (Actus + push).
-   * Pas de notif si statut OPEN ou inchangé (géré côté appelant).
+   * Notifie le signaleur et (si pertinent) le signalé.
+   * - RESOLVED : remercie le signaleur ; détail de sanction au signalé
+   * - DISMISSED : informe les deux (classé sans suite)
+   * - REVIEWING : informe seulement le signaleur
    */
   async notifyReportStatusUpdate(input: {
     reporterId: string;
+    reportedUserId?: string | null;
     reportId: string;
     status: ReportStatus;
     targetType: ReportTargetType;
     targetId: string;
     reason: ReportReason;
+    sanction?: ReportSanction | null;
     moderatorNote?: string | null;
   }): Promise<void> {
     if (input.status === ReportStatus.OPEN) {
       return;
     }
 
-    const copy = REPORT_STATUS_NOTIF[input.status];
-    const note = input.moderatorNote?.trim();
-    const body = note ? `${copy.body}\n\nMessage de l’équipe : ${note}` : copy.body;
-
-    const payload: NotifyPayload = {
-      type: NotificationType.REPORT_UPDATE,
-      title: copy.title,
-      body,
-      data: {
-        reportId: input.reportId,
-        reportStatus: input.status,
-        targetType: input.targetType,
-        targetId: input.targetId,
-        reason: input.reason,
-      },
+    const baseData: NotifyData = {
+      reportId: input.reportId,
+      reportStatus: input.status,
+      targetType: input.targetType,
+      targetId: input.targetId,
+      reason: input.reason,
+      sanction: input.sanction ?? undefined,
     };
+    const note = input.moderatorNote?.trim();
 
+    const reporterPayload = this.buildReporterPayload(
+      input.status,
+      baseData,
+      note,
+    );
     await this.createAndPush(
       [input.reporterId],
-      payload,
-      `report ${input.reportId} → ${input.status}`,
+      reporterPayload,
+      `report ${input.reportId} → reporter`,
     );
+
+    const targetId = input.reportedUserId;
+    if (
+      !targetId ||
+      targetId === input.reporterId ||
+      input.status === ReportStatus.REVIEWING
+    ) {
+      return;
+    }
+
+    const targetPayload = this.buildTargetPayload(
+      input.status,
+      baseData,
+      input.sanction ?? null,
+      note,
+    );
+    if (!targetPayload) {
+      return;
+    }
+
+    await this.createAndPush(
+      [targetId],
+      targetPayload,
+      `report ${input.reportId} → target`,
+    );
+  }
+
+  private buildReporterPayload(
+    status: ReportStatus,
+    baseData: NotifyData,
+    note?: string,
+  ): NotifyPayload {
+    const data: NotifyData = { ...baseData, audience: 'reporter' };
+
+    if (status === ReportStatus.REVIEWING) {
+      return {
+        type: NotificationType.REPORT_UPDATE,
+        title: 'Signalement en cours d’examen',
+        body: 'L’équipe Himba examine ton signalement. On te tiendra au courant.',
+        data,
+      };
+    }
+
+    if (status === ReportStatus.RESOLVED) {
+      let body =
+        'Merci pour ton signalement : il était fondé. Des mesures ont été prises pour faire respecter les règles de Himba.';
+      if (note) {
+        body += `\n\nPrécision de l’équipe : ${note}`;
+      }
+      return {
+        type: NotificationType.REPORT_UPDATE,
+        title: 'Merci — mesures prises',
+        body,
+        data,
+      };
+    }
+
+    // DISMISSED
+    let dismissedBody =
+      'Ton signalement a été examiné et classé sans suite. Merci d’avoir alerté l’équipe.';
+    if (note) {
+      dismissedBody += `\n\nMessage de l’équipe : ${note}`;
+    }
+    return {
+      type: NotificationType.REPORT_UPDATE,
+      title: 'Signalement classé',
+      body: dismissedBody,
+      data,
+    };
+  }
+
+  private buildTargetPayload(
+    status: ReportStatus,
+    baseData: NotifyData,
+    sanction: ReportSanction | null,
+    note?: string,
+  ): NotifyPayload | null {
+    const data: NotifyData = { ...baseData, audience: 'target' };
+
+    if (status === ReportStatus.DISMISSED) {
+      let body =
+        'Un signalement te concernant a été examiné par l’équipe Himba et classé sans suite. Aucune sanction n’a été appliquée.';
+      if (note) {
+        body += `\n\nMessage de l’équipe : ${note}`;
+      }
+      return {
+        type: NotificationType.REPORT_SANCTION,
+        title: 'Signalement te concernant — sans suite',
+        body,
+        data,
+      };
+    }
+
+    if (status === ReportStatus.RESOLVED && sanction) {
+      let body = REPORT_SANCTION_TARGET_BODY[sanction];
+      if (note) {
+        body += `\n\nDétail de la décision : ${note}`;
+      }
+      return {
+        type: NotificationType.REPORT_SANCTION,
+        title: 'Décision suite à un signalement',
+        body,
+        data,
+      };
+    }
+
+    return null;
   }
 
   private async createAndPush(

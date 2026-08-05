@@ -50,10 +50,9 @@ describe('ReportsController', () => {
     expect(service.listForModeration).toHaveBeenCalledWith(undefined, 20);
 
     await controller.updateStatus('r1', { status: ReportStatus.DISMISSED });
-    expect(service.updateStatus).toHaveBeenCalledWith(
-      'r1',
-      ReportStatus.DISMISSED,
-      undefined,
-    );
+    expect(service.updateStatus).toHaveBeenCalledWith('r1', ReportStatus.DISMISSED, {
+      moderatorNote: undefined,
+      sanction: undefined,
+    });
   });
 });

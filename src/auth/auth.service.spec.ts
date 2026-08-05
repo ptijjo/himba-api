@@ -114,6 +114,7 @@ describe('AuthService', () => {
         email: 'Alice@Example.com',
         username: 'alice',
         password: 'Password1!',
+        role: UserRole.LISTENER,
       });
 
       expect(bcrypt.hash).toHaveBeenCalledWith('Password1!', 14);
@@ -135,6 +136,52 @@ describe('AuthService', () => {
       expect(jwtService.signAsync).not.toHaveBeenCalled();
     });
 
+    it('crée un ARTIST + profil Artist (displayName = pseudo)', async () => {
+      prisma.user.findUnique.mockResolvedValue(null);
+      const createdUser = {
+        ...baseUser,
+        role: UserRole.ARTIST,
+        emailVerifiedAt: null,
+      };
+      prisma.$transaction.mockImplementation(
+        async (fn: (tx: typeof prisma) => Promise<unknown>) => fn(prisma),
+      );
+      prisma.user.create.mockResolvedValue(createdUser);
+      prisma.artist.create.mockResolvedValue({
+        id: 'art1',
+        userId: createdUser.id,
+        displayName: 'alice',
+      });
+
+      const result = await service.register({
+        email: 'alice@example.com',
+        username: 'alice',
+        password: 'Password1!',
+        role: UserRole.ARTIST,
+        acceptArtistTerms: true,
+      });
+
+      expect(prisma.artist.create).toHaveBeenCalledWith({
+        data: {
+          userId: createdUser.id,
+          displayName: 'alice',
+        },
+      });
+      expect(result.email).toBe('alice@example.com');
+    });
+
+    it('refuse ARTIST sans acceptation CGU', async () => {
+      await expect(
+        service.register({
+          email: 'alice@example.com',
+          username: 'alice',
+          password: 'Password1!',
+          role: UserRole.ARTIST,
+          acceptArtistTerms: false,
+        }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    });
+
     it('lève ConflictException si email déjà pris', async () => {
       prisma.user.findUnique
         .mockResolvedValueOnce(baseUser)
@@ -145,6 +192,7 @@ describe('AuthService', () => {
           email: 'alice@example.com',
           username: 'alice2',
           password: 'Password1!',
+          role: UserRole.LISTENER,
         }),
       ).rejects.toBeInstanceOf(ConflictException);
     });
@@ -159,6 +207,7 @@ describe('AuthService', () => {
           email: 'new@example.com',
           username: 'alice',
           password: 'Password1!',
+          role: UserRole.LISTENER,
         }),
       ).rejects.toBeInstanceOf(ConflictException);
     });

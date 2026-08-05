@@ -12,6 +12,7 @@ import {
   MockPrismaService,
 } from '../test/mocks/prisma.mock';
 import { NotificationsService } from './notifications.service';
+import { ReportSanction } from '../reports/report-sanction';
 
 describe('NotificationsService', () => {
   let service: NotificationsService;
@@ -167,23 +168,17 @@ describe('NotificationsService', () => {
 
     await service.notifyReportStatusUpdate({
       reporterId: 'u1',
+      reportedUserId: 'u2',
       reportId: 'r1',
       status: ReportStatus.RESOLVED,
       targetType: ReportTargetType.USER,
       targetId: 'u2',
       reason: ReportReason.SPAM,
+      sanction: ReportSanction.WARNING,
       moderatorNote: 'Compte averti',
     });
 
-    expect(prisma.notification.createMany).toHaveBeenCalledWith({
-      data: [
-        expect.objectContaining({
-          userId: 'u1',
-          type: NotificationType.REPORT_UPDATE,
-          title: 'Signalement traité',
-        }),
-      ],
-    });
+    expect(prisma.notification.createMany).toHaveBeenCalledTimes(2);
     expect(global.fetch).toHaveBeenCalled();
   });
 

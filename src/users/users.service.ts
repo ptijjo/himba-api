@@ -132,6 +132,18 @@ export class UsersService {
           throw new ConflictException('Nom d’utilisateur déjà utilisé');
         }
         data.username = username;
+
+        // Si le nom d’artiste était encore égal à l’ancien pseudo → le suivre
+        const artist = await this.prisma.artist.findUnique({
+          where: { userId },
+          select: { id: true, displayName: true },
+        });
+        if (artist && artist.displayName === current.username) {
+          await this.prisma.artist.update({
+            where: { id: artist.id },
+            data: { displayName: username },
+          });
+        }
       }
     }
     if (avatar) {
