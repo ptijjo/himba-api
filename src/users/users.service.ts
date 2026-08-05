@@ -1,14 +1,31 @@
 import {
+  BadRequestException,
   ConflictException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { User, UserRole } from '../generated/prisma/client';
+import {
+  Prisma,
+  User,
+  UserRole,
+  UserStatus,
+} from '../generated/prisma/client';
+import { parseLimit } from '../common/pagination/cursor.dto';
 import { PrismaService } from '../prisma/prisma.service';
 import { StorageService } from '../storage/storage.service';
 import { UpdateProfileDto } from './dto/update-profile.dto';
 
 export type PublicUser = Omit<User, 'passwordHash'>;
+
+export type AdminUserListItem = PublicUser & {
+  artistId: string | null;
+};
+
+export type AdminUsersListResponse = {
+  items: AdminUserListItem[];
+  nextCursor: string | null;
+};
 
 /** Profil visible par un autre compte — jamais email / hash / status. */
 export type UserPublicProfile = {
@@ -154,5 +171,120 @@ export class UsersService {
     if (existing) {
       throw new ConflictException('Nom d’utilisateur déjà utilisé');
     }
+  }
+
+  /**
+   * Liste ADMIN — sans passwordHash ; filtres q / role / status.
+   */
+  async listForAdmin(query: {
+    cursor?: string;
+    limit?: number;
+    q?: string;
+    role?: UserRole;
+    status?: UserStatus;
+  }): Promise<AdminUsersListResponse> {
+    const take = parseLimit(query.limit);
+    const q = query.q?.trim();
+
+    const where: Prisma.UserWhereInput = {
+      ...(query.role ? { role: query.role } : {}),
+      ...(query.status ? { status: query.status } : {}),
+      ...(q
+        ? {
+            OR: [
+              { email: { contains: q, mode: 'insensitive' } },
+              { username: { contains: q, mode: 'insensitive' } },
+            ],
+          }
+        : {}),
+    };
+
+    const rows = await this.prisma.user.findMany({
+      where,
+      orderBy: { createdAt: 'desc' },
+      take: take + 1,
+      ...(query.cursor
+        ? { cursor: { id: query.cursor }, skip: 1 }
+        : {}),
+      include: {
+        artist: { select: { id: true } },
+      },
+    });
+
+    const hasMore = rows.length > take;
+    const page = hasMore ? rows.slice(0, take) : rows;
+
+    return {
+      items: page.map((row) => {
+        const { artist, ...user } = row;
+        return {
+          ...this.toPublic(user),
+          artistId: artist?.id ?? null,
+        };
+      }),
+      nextCursor: hasMore ? (page[page.length - 1]?.id ?? null) : null,
+    };
+  }
+
+  /**
+   * Modération ADMIN — statut / rôle (pas de promotion ADMIN).
+   * Les comptes ADMIN seedés sont protégés.
+   */
+  async updateForAdmin(
+    id: string,
+    data: { status?: UserStatus; role?: UserRole },
+  ): Promise<AdminUserListItem> {
+    const existing = await this.prisma.user.findUnique({
+      where: { id },
+      include: { artist: { select: { id: true } } },
+    });
+    if (!existing) {
+      throw new NotFoundException('Utilisateur introuvable');
+    }
+    if (existing.role === UserRole.ADMIN) {
+      throw new ForbiddenException(
+        'Le compte administrateur seedé ne peut pas être modifié ici',
+      );
+    }
+    if (!data.status && !data.role) {
+      throw new BadRequestException('Aucun champ à mettre à jour');
+    }
+    if (data.role === UserRole.ADMIN) {
+      throw new ForbiddenException(
+        'Impossible d’attribuer le rôle ADMIN depuis le back-office',
+      );
+    }
+
+    const updated = await this.prisma.user.update({
+      where: { id },
+      data: {
+        ...(data.status ? { status: data.status } : {}),
+        ...(data.role ? { role: data.role } : {}),
+      },
+      include: { artist: { select: { id: true } } },
+    });
+
+    const { artist, ...user } = updated;
+    return {
+      ...this.toPublic(user),
+      artistId: artist?.id ?? null,
+    };
+  }
+
+  /** Suppression ADMIN — cascade Prisma ; comptes ADMIN protégés. */
+  async deleteForAdmin(id: string): Promise<{ message: string }> {
+    const existing = await this.prisma.user.findUnique({ where: { id } });
+    if (!existing) {
+      throw new NotFoundException('Utilisateur introuvable');
+    }
+    if (existing.role === UserRole.ADMIN) {
+      throw new ForbiddenException(
+        'Le compte administrateur seedé ne peut pas être supprimé',
+      );
+    }
+    await this.prisma.user.delete({ where: { id } });
+    return {
+      message: `Compte « ${existing.username} » supprimé.`,
+    };
   }
 }

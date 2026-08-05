@@ -263,4 +263,237 @@ export class PaymentsService {
       artistAmount: share.artistAmount.toFixed(2),
     };
   }
+
+  /**
+   * Stats ADMIN — ventes titres + albums (jour / semaine / mois + séries graphiques).
+   */
+  async getSalesStatsForAdmin(): Promise<AdminSalesStatsResponse> {
+    const now = new Date();
+    const startOfToday = startOfUtcDay(now);
+    const startOfWeek = startOfUtcWeek(now);
+    const startOfMonth = startOfUtcMonth(now);
+    const dailyFrom = addUtcDays(startOfToday, -29);
+    const weeklyFrom = addUtcDays(startOfUtcWeek(now), -7 * 11);
+    const monthlyFrom = addUtcMonths(startOfUtcMonth(now), -11);
+
+    const earliest = minDate(dailyFrom, weeklyFrom, monthlyFrom);
+
+    const [tracks, albums] = await Promise.all([
+      this.prisma.purchase.findMany({
+        where: { createdAt: { gte: earliest } },
+        select: { createdAt: true, amount: true },
+        orderBy: { createdAt: 'asc' },
+      }),
+      this.prisma.albumPurchase.findMany({
+        where: { createdAt: { gte: earliest } },
+        select: { createdAt: true, amount: true },
+        orderBy: { createdAt: 'asc' },
+      }),
+    ]);
+
+    const events: SaleEvent[] = [
+      ...tracks.map((r) => ({
+        at: r.createdAt,
+        amount: decimalToNumber(r.amount),
+        kind: 'track' as const,
+      })),
+      ...albums.map((r) => ({
+        at: r.createdAt,
+        amount: decimalToNumber(r.amount),
+        kind: 'album' as const,
+      })),
+    ];
+
+    return {
+      totals: {
+        today: aggregateSince(events, startOfToday),
+        week: aggregateSince(events, startOfWeek),
+        month: aggregateSince(events, startOfMonth),
+      },
+      series: {
+        daily: buildDailySeries(events, dailyFrom, startOfToday),
+        weekly: buildWeeklySeries(events, weeklyFrom, startOfWeek),
+        monthly: buildMonthlySeries(events, monthlyFrom, startOfMonth),
+      },
+    };
+  }
 }
+
+export type AdminSalesBucket = {
+  count: number;
+  amount: number;
+  tracks: number;
+  albums: number;
+};
+
+export type AdminSalesPoint = AdminSalesBucket & {
+  /** Clé ISO : jour YYYY-MM-DD, semaine YYYY-Www, mois YYYY-MM */
+  key: string;
+  label: string;
+};
+
+export type AdminSalesStatsResponse = {
+  totals: {
+    today: AdminSalesBucket;
+    week: AdminSalesBucket;
+    month: AdminSalesBucket;
+  };
+  series: {
+    daily: AdminSalesPoint[];
+    weekly: AdminSalesPoint[];
+    monthly: AdminSalesPoint[];
+  };
+};
+
+type SaleEvent = {
+  at: Date;
+  amount: number;
+  kind: 'track' | 'album';
+};
+
+function decimalToNumber(value: Prisma.Decimal | number | string): number {
+  return Number(value);
+}
+
+function emptyBucket(): AdminSalesBucket {
+  return { count: 0, amount: 0, tracks: 0, albums: 0 };
+}
+
+function addEvent(bucket: AdminSalesBucket, event: SaleEvent): void {
+  bucket.count += 1;
+  bucket.amount += event.amount;
+  if (event.kind === 'track') bucket.tracks += 1;
+  else bucket.albums += 1;
+}
+
+function roundAmount(bucket: AdminSalesBucket): AdminSalesBucket {
+  return {
+    ...bucket,
+    amount: Math.round(bucket.amount * 100) / 100,
+  };
+}
+
+function aggregateSince(events: SaleEvent[], from: Date): AdminSalesBucket {
+  const bucket = emptyBucket();
+  for (const event of events) {
+    if (event.at >= from) addEvent(bucket, event);
+  }
+  return roundAmount(bucket);
+}
+
+function startOfUtcDay(d: Date): Date {
+  return new Date(
+    Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()),
+  );
+}
+
+function startOfUtcWeek(d: Date): Date {
+  const day = startOfUtcDay(d);
+  const weekday = day.getUTCDay(); // 0 = dimanche
+  const mondayOffset = weekday === 0 ? -6 : 1 - weekday;
+  return addUtcDays(day, mondayOffset);
+}
+
+function startOfUtcMonth(d: Date): Date {
+  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1));
+}
+
+function addUtcDays(d: Date, days: number): Date {
+  const next = new Date(d);
+  next.setUTCDate(next.getUTCDate() + days);
+  return next;
+}
+
+function addUtcMonths(d: Date, months: number): Date {
+  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + months, 1));
+}
+
+function minDate(...dates: Date[]): Date {
+  return new Date(Math.min(...dates.map((d) => d.getTime())));
+}
+
+function dayKey(d: Date): string {
+  return d.toISOString().slice(0, 10);
+}
+
+function monthKey(d: Date): string {
+  return d.toISOString().slice(0, 7);
+}
+
+/** Semaine ISO approximée (lundi) — clé YYYY-MM-DD du lundi. */
+function weekKey(monday: Date): string {
+  return `W${dayKey(monday)}`;
+}
+
+function buildDailySeries(
+  events: SaleEvent[],
+  from: Date,
+  to: Date,
+): AdminSalesPoint[] {
+  const map = new Map<string, AdminSalesBucket>();
+  for (let cursor = new Date(from); cursor <= to; cursor = addUtcDays(cursor, 1)) {
+    map.set(dayKey(cursor), emptyBucket());
+  }
+  for (const event of events) {
+    const key = dayKey(startOfUtcDay(event.at));
+    const bucket = map.get(key);
+    if (bucket) addEvent(bucket, event);
+  }
+  return [...map.entries()].map(([key, bucket]) => ({
+    key,
+    label: key,
+    ...roundAmount(bucket),
+  }));
+}
+
+function buildWeeklySeries(
+  events: SaleEvent[],
+  fromMonday: Date,
+  toMonday: Date,
+): AdminSalesPoint[] {
+  const map = new Map<string, { monday: Date; bucket: AdminSalesBucket }>();
+  for (
+    let cursor = new Date(fromMonday);
+    cursor <= toMonday;
+    cursor = addUtcDays(cursor, 7)
+  ) {
+    map.set(weekKey(cursor), { monday: new Date(cursor), bucket: emptyBucket() });
+  }
+  for (const event of events) {
+    const monday = startOfUtcWeek(event.at);
+    const key = weekKey(monday);
+    const entry = map.get(key);
+    if (entry) addEvent(entry.bucket, event);
+  }
+  return [...map.entries()].map(([key, { monday, bucket }]) => ({
+    key,
+    label: `Sem. ${dayKey(monday)}`,
+    ...roundAmount(bucket),
+  }));
+}
+
+function buildMonthlySeries(
+  events: SaleEvent[],
+  from: Date,
+  to: Date,
+): AdminSalesPoint[] {
+  const map = new Map<string, AdminSalesBucket>();
+  for (
+    let cursor = new Date(from);
+    cursor <= to;
+    cursor = addUtcMonths(cursor, 1)
+  ) {
+    map.set(monthKey(cursor), emptyBucket());
+  }
+  for (const event of events) {
+    const key = monthKey(startOfUtcMonth(event.at));
+    const bucket = map.get(key);
+    if (bucket) addEvent(bucket, event);
+  }
+  return [...map.entries()].map(([key, bucket]) => ({
+    key,
+    label: key,
+    ...roundAmount(bucket),
+  }));
+}
+

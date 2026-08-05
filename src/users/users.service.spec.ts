@@ -202,4 +202,40 @@ describe('UsersService', () => {
       } as Express.Multer.File),
     ).resolves.toMatchObject({ avatarUrl: 'r2://avatars/u1.webp' });
   });
+
+  it('listForAdmin pagine sans passwordHash', async () => {
+    prisma.user.findMany.mockResolvedValue([
+      { ...user, artist: { id: 'a1' } },
+    ]);
+
+    const result = await service.listForAdmin({ limit: 20 });
+
+    expect(result.items).toHaveLength(1);
+    expect(result.items[0]).not.toHaveProperty('passwordHash');
+    expect(result.items[0].artistId).toBe('a1');
+    expect(result.nextCursor).toBeNull();
+  });
+
+  it('updateForAdmin refuse les comptes ADMIN', async () => {
+    prisma.user.findUnique.mockResolvedValue({
+      ...user,
+      role: UserRole.ADMIN,
+      artist: null,
+    });
+
+    await expect(
+      service.updateForAdmin('u1', { status: UserStatus.BANNED }),
+    ).rejects.toThrow(/administrateur/);
+  });
+
+  it('deleteForAdmin refuse les comptes ADMIN', async () => {
+    prisma.user.findUnique.mockResolvedValue({
+      ...user,
+      role: UserRole.ADMIN,
+    });
+
+    await expect(service.deleteForAdmin('u1')).rejects.toThrow(
+      /administrateur/,
+    );
+  });
 });
