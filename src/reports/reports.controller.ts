@@ -40,6 +40,10 @@ export class ReportsController {
     @Param('id') id: string,
     @Body() dto: UpdateReportStatusDto,
   ) {
-    return this.reportsService.updateStatus(id, dto.status);
+    return this.reportsService.updateStatus(
+      id,
+      dto.status,
+      dto.moderatorNote,
+    );
   }
 }

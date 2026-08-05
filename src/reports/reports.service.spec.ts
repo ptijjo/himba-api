@@ -10,6 +10,7 @@ import {
   ReportStatus,
   ReportTargetType,
 } from '../generated/prisma/client';
+import { NotificationsService } from '../notifications/notifications.service';
 import {
   createMockPrismaService,
   mockPrismaServiceProvider,
@@ -20,11 +21,19 @@ import { ReportsService } from './reports.service';
 describe('ReportsService', () => {
   let service: ReportsService;
   let prisma: MockPrismaService;
+  let notifications: { notifyReportStatusUpdate: jest.Mock };
 
   beforeEach(async () => {
     prisma = createMockPrismaService();
+    notifications = {
+      notifyReportStatusUpdate: jest.fn().mockResolvedValue(undefined),
+    };
     const module: TestingModule = await Test.createTestingModule({
-      providers: [ReportsService, mockPrismaServiceProvider(prisma)],
+      providers: [
+        ReportsService,
+        mockPrismaServiceProvider(prisma),
+        { provide: NotificationsService, useValue: notifications },
+      ],
     }).compile();
     service = module.get(ReportsService);
   });
@@ -90,14 +99,50 @@ describe('ReportsService', () => {
     ).rejects.toBeInstanceOf(NotFoundException);
   });
 
-  it('updateStatus', async () => {
-    prisma.report.findUnique.mockResolvedValue({ id: 'r1' });
+  it('updateStatus notifie l’auteur si statut change', async () => {
+    prisma.report.findUnique.mockResolvedValue({
+      id: 'r1',
+      reporterId: 'u1',
+      status: ReportStatus.OPEN,
+      targetType: ReportTargetType.TRACK,
+      targetId: 't1',
+      reason: ReportReason.SPAM,
+    });
     prisma.report.update.mockResolvedValue({
       id: 'r1',
       status: ReportStatus.RESOLVED,
     });
+
     await expect(
-      service.updateStatus('r1', ReportStatus.RESOLVED),
+      service.updateStatus('r1', ReportStatus.RESOLVED, 'Merci'),
     ).resolves.toMatchObject({ status: ReportStatus.RESOLVED });
+
+    expect(notifications.notifyReportStatusUpdate).toHaveBeenCalledWith({
+      reporterId: 'u1',
+      reportId: 'r1',
+      status: ReportStatus.RESOLVED,
+      targetType: ReportTargetType.TRACK,
+      targetId: 't1',
+      reason: ReportReason.SPAM,
+      moderatorNote: 'Merci',
+    });
+  });
+
+  it('updateStatus ne notifie pas si statut inchangé', async () => {
+    prisma.report.findUnique.mockResolvedValue({
+      id: 'r1',
+      reporterId: 'u1',
+      status: ReportStatus.RESOLVED,
+      targetType: ReportTargetType.TRACK,
+      targetId: 't1',
+      reason: ReportReason.SPAM,
+    });
+    prisma.report.update.mockResolvedValue({
+      id: 'r1',
+      status: ReportStatus.RESOLVED,
+    });
+
+    await service.updateStatus('r1', ReportStatus.RESOLVED);
+    expect(notifications.notifyReportStatusUpdate).not.toHaveBeenCalled();
   });
 });

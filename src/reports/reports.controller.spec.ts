@@ -53,6 +53,7 @@ describe('ReportsController', () => {
     expect(service.updateStatus).toHaveBeenCalledWith(
       'r1',
       ReportStatus.DISMISSED,
+      undefined,
     );
   });
 });

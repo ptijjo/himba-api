@@ -1,6 +1,11 @@
 import { NotFoundException } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
-import { NotificationType } from '../generated/prisma/client';
+import {
+  NotificationType,
+  ReportReason,
+  ReportStatus,
+  ReportTargetType,
+} from '../generated/prisma/client';
 import {
   createMockPrismaService,
   mockPrismaServiceProvider,
@@ -150,6 +155,46 @@ describe('NotificationsService', () => {
       artistId: 'artist-1',
       followerId: 'u1',
       followerUsername: 'moi',
+    });
+    expect(prisma.notification.createMany).not.toHaveBeenCalled();
+  });
+
+  it('notifyReportStatusUpdate crée notif + push', async () => {
+    prisma.notification.createMany.mockResolvedValue({ count: 1 });
+    prisma.devicePushToken.findMany.mockResolvedValue([
+      { token: 'ExponentPushToken[a]' },
+    ]);
+
+    await service.notifyReportStatusUpdate({
+      reporterId: 'u1',
+      reportId: 'r1',
+      status: ReportStatus.RESOLVED,
+      targetType: ReportTargetType.USER,
+      targetId: 'u2',
+      reason: ReportReason.SPAM,
+      moderatorNote: 'Compte averti',
+    });
+
+    expect(prisma.notification.createMany).toHaveBeenCalledWith({
+      data: [
+        expect.objectContaining({
+          userId: 'u1',
+          type: NotificationType.REPORT_UPDATE,
+          title: 'Signalement traité',
+        }),
+      ],
+    });
+    expect(global.fetch).toHaveBeenCalled();
+  });
+
+  it('notifyReportStatusUpdate ignore OPEN', async () => {
+    await service.notifyReportStatusUpdate({
+      reporterId: 'u1',
+      reportId: 'r1',
+      status: ReportStatus.OPEN,
+      targetType: ReportTargetType.TRACK,
+      targetId: 't1',
+      reason: ReportReason.OTHER,
     });
     expect(prisma.notification.createMany).not.toHaveBeenCalled();
   });

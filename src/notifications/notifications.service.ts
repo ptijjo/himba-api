@@ -1,25 +1,59 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
-import { NotificationType, Prisma } from '../generated/prisma/client';
+import {
+  NotificationType,
+  Prisma,
+  ReportReason,
+  ReportStatus,
+  ReportTargetType,
+} from '../generated/prisma/client';
 import { parseLimit } from '../common/pagination/cursor.dto';
 import { PrismaService } from '../prisma/prisma.service';
 
+/** Payload JSON stocké / envoyé en push — champs selon le type. */
 export type NotifyData = {
-  artistId: string;
+  artistId?: string;
   trackId?: string;
   albumId?: string;
   followerId?: string;
   followerUsername?: string;
+  reportId?: string;
+  reportStatus?: ReportStatus;
+  targetType?: ReportTargetType;
+  targetId?: string;
+  reason?: ReportReason;
 };
 
-export type ReleaseNotifyPayload = {
+export type NotifyPayload = {
   type: NotificationType;
   title: string;
   body: string;
   data: NotifyData;
 };
 
+/** @deprecated alias — garder les appels sorties/followers. */
+export type ReleaseNotifyPayload = NotifyPayload;
+
 const EXPO_PUSH_URL = 'https://exp.host/--/api/v2/push/send';
 const PUSH_CHUNK = 100;
+
+const REPORT_STATUS_NOTIF: Record<
+  Exclude<ReportStatus, 'OPEN'>,
+  { title: string; body: string }
+> = {
+  REVIEWING: {
+    title: 'Signalement en cours d’examen',
+    body: 'L’équipe Himba examine ton signalement. On te tiendra au courant.',
+  },
+  RESOLVED: {
+    title: 'Signalement traité',
+    body: 'Ton signalement a été traité. Merci d’avoir aidé à garder Himba sûr.',
+  },
+  DISMISSED: {
+    title: 'Signalement classé',
+    body: 'Ton signalement a été examiné et classé sans suite pour le moment.',
+  },
+};
+
 
 @Injectable()
 export class NotificationsService {
@@ -159,9 +193,50 @@ export class NotificationsService {
     );
   }
 
+  /**
+   * Notifie l’auteur d’un signalement du nouveau statut (Actus + push).
+   * Pas de notif si statut OPEN ou inchangé (géré côté appelant).
+   */
+  async notifyReportStatusUpdate(input: {
+    reporterId: string;
+    reportId: string;
+    status: ReportStatus;
+    targetType: ReportTargetType;
+    targetId: string;
+    reason: ReportReason;
+    moderatorNote?: string | null;
+  }): Promise<void> {
+    if (input.status === ReportStatus.OPEN) {
+      return;
+    }
+
+    const copy = REPORT_STATUS_NOTIF[input.status];
+    const note = input.moderatorNote?.trim();
+    const body = note ? `${copy.body}\n\nMessage de l’équipe : ${note}` : copy.body;
+
+    const payload: NotifyPayload = {
+      type: NotificationType.REPORT_UPDATE,
+      title: copy.title,
+      body,
+      data: {
+        reportId: input.reportId,
+        reportStatus: input.status,
+        targetType: input.targetType,
+        targetId: input.targetId,
+        reason: input.reason,
+      },
+    };
+
+    await this.createAndPush(
+      [input.reporterId],
+      payload,
+      `report ${input.reportId} → ${input.status}`,
+    );
+  }
+
   private async createAndPush(
     userIds: string[],
-    payload: ReleaseNotifyPayload,
+    payload: NotifyPayload,
     logCtx: string,
   ): Promise<void> {
     if (userIds.length === 0) {

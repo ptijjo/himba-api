@@ -25,6 +25,7 @@ enum NotificationType {
   TRACK_RELEASE
   ALBUM_RELEASE
   NEW_FOLLOWER
+  REPORT_UPDATE
 }
 
 /** Cible d’un signalement utilisateur. */

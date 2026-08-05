@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ConflictException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import {
@@ -11,12 +12,18 @@ import {
   ReportTargetType,
 } from '../generated/prisma/client';
 import { parseLimit } from '../common/pagination/cursor.dto';
+import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
 import type { CreateReportDto } from './dto/create-report.dto';
 
 @Injectable()
 export class ReportsService {
-  constructor(private readonly prisma: PrismaService) {}
+  private readonly logger = new Logger(ReportsService.name);
+
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly notifications: NotificationsService,
+  ) {}
 
   async create(reporterId: string, dto: CreateReportDto) {
     await this.assertTargetExists(dto.targetType, dto.targetId);
@@ -63,15 +70,43 @@ export class ReportsService {
     };
   }
 
-  async updateStatus(id: string, status: ReportStatus) {
+  async updateStatus(
+    id: string,
+    status: ReportStatus,
+    moderatorNote?: string,
+  ) {
     const row = await this.prisma.report.findUnique({ where: { id } });
     if (!row) {
       throw new NotFoundException('Signalement introuvable');
     }
-    return this.prisma.report.update({
+
+    const updated = await this.prisma.report.update({
       where: { id },
       data: { status },
     });
+
+    // Notifier l’auteur seulement si le statut change (hors OPEN)
+    if (row.status !== status && status !== ReportStatus.OPEN) {
+      try {
+        await this.notifications.notifyReportStatusUpdate({
+          reporterId: row.reporterId,
+          reportId: row.id,
+          status,
+          targetType: row.targetType,
+          targetId: row.targetId,
+          reason: row.reason,
+          moderatorNote,
+        });
+      } catch (err) {
+        this.logger.warn(
+          `Notif signalement ${id} échouée: ${
+            err instanceof Error ? err.message : 'erreur inconnue'
+          }`,
+        );
+      }
+    }
+
+    return updated;
   }
 
   private async assertTargetExists(
