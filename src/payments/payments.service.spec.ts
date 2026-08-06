@@ -4,6 +4,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
+import { ArtistsService } from '../artists/artists.service';
 import { mockConfigServiceProvider } from '../test/mocks/config.mock';
 import {
   createMockPrismaService,
@@ -17,11 +18,19 @@ describe('PaymentsService', () => {
   let prisma: MockPrismaService;
   let paymentIntentsCreate: jest.Mock;
   let constructEvent: jest.Mock;
+  let artistsService: {
+    syncStripeAccount: jest.Mock;
+    handleConnectDeauthorized: jest.Mock;
+  };
 
   beforeEach(async () => {
     prisma = createMockPrismaService();
     paymentIntentsCreate = jest.fn();
     constructEvent = jest.fn();
+    artistsService = {
+      syncStripeAccount: jest.fn(),
+      handleConnectDeauthorized: jest.fn(),
+    };
 
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -32,6 +41,7 @@ describe('PaymentsService', () => {
           STRIPE_SECRET_KEY: 'sk_test_x',
           STRIPE_WEBHOOK_SECRET: 'whsec_x',
         }),
+        { provide: ArtistsService, useValue: artistsService },
       ],
     }).compile();
 
@@ -80,7 +90,10 @@ describe('PaymentsService', () => {
       amount: '5.00',
     });
     expect(paymentIntentsCreate).toHaveBeenCalledWith(
-      expect.objectContaining({ amount: 500 }),
+      expect.objectContaining({
+        amount: 500,
+        payment_method_types: ['card'],
+      }),
     );
   });
 
@@ -193,12 +206,44 @@ describe('PaymentsService', () => {
           STRIPE_SECRET_KEY: 'sk_test_x',
           STRIPE_WEBHOOK_SECRET: '',
         }),
+        { provide: ArtistsService, useValue: artistsService },
       ],
     }).compile();
     const bare = module.get(PaymentsService);
     await expect(
       bare.handleWebhook(Buffer.from('{}'), 'sig'),
     ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it('webhook account.updated délègue au sync KYC artiste', async () => {
+    const account = {
+      id: 'acct_1',
+      details_submitted: true,
+      charges_enabled: true,
+    };
+    constructEvent.mockReturnValue({
+      type: 'account.updated',
+      data: { object: account },
+    });
+
+    await service.handleWebhook(Buffer.from('{}'), 'sig');
+
+    expect(artistsService.syncStripeAccount).toHaveBeenCalledWith(account);
+    expect(prisma.purchase.create).not.toHaveBeenCalled();
+  });
+
+  it('webhook account.application.deauthorized délègue', async () => {
+    constructEvent.mockReturnValue({
+      type: 'account.application.deauthorized',
+      account: 'acct_1',
+      data: { object: { id: 'acct_1' } },
+    });
+
+    await service.handleWebhook(Buffer.from('{}'), 'sig');
+
+    expect(artistsService.handleConnectDeauthorized).toHaveBeenCalledWith(
+      'acct_1',
+    );
   });
 
   it('crée un PaymentIntent album', async () => {

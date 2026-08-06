@@ -11,18 +11,29 @@ import {
   mockPrismaServiceProvider,
   MockPrismaService,
 } from '../test/mocks/prisma.mock';
+import {
+  createMockRedisService,
+  mockRedisServiceProvider,
+  MockRedisService,
+} from '../test/mocks/redis.mock';
 import { NotificationsService } from './notifications.service';
 import { ReportSanction } from '../reports/report-sanction';
 
 describe('NotificationsService', () => {
   let service: NotificationsService;
   let prisma: MockPrismaService;
+  let redis: MockRedisService;
   const originalFetch = global.fetch;
 
   beforeEach(async () => {
     prisma = createMockPrismaService();
+    redis = createMockRedisService();
     const module: TestingModule = await Test.createTestingModule({
-      providers: [NotificationsService, mockPrismaServiceProvider(prisma)],
+      providers: [
+        NotificationsService,
+        mockPrismaServiceProvider(prisma),
+        mockRedisServiceProvider(redis),
+      ],
     }).compile();
     service = module.get(NotificationsService);
     global.fetch = jest.fn().mockResolvedValue({ ok: true }) as unknown as typeof fetch;
@@ -52,6 +63,7 @@ describe('NotificationsService', () => {
   });
 
   it('listMine pagine', async () => {
+    redis.get.mockResolvedValue('0');
     prisma.notification.findMany.mockResolvedValue([
       { id: '1' },
       { id: '2' },
@@ -60,6 +72,19 @@ describe('NotificationsService', () => {
     const page = await service.listMine('u1', undefined, 2);
     expect(page.items).toHaveLength(2);
     expect(page.nextCursor).toBe('2');
+  });
+
+  it('listMine sert depuis Redis quand présent', async () => {
+    redis.get.mockResolvedValue('3');
+    redis.getJson.mockResolvedValue({
+      items: [{ id: 'n1' }],
+      nextCursor: null,
+    });
+
+    const page = await service.listMine('u1', undefined, 20);
+
+    expect(page.items).toEqual([{ id: 'n1' }]);
+    expect(prisma.notification.findMany).not.toHaveBeenCalled();
   });
 
   it('markRead refuse une notif d’autrui', async () => {
@@ -85,6 +110,7 @@ describe('NotificationsService', () => {
     await expect(service.markRead('u1', 'n1')).resolves.toMatchObject({
       id: 'n1',
     });
+    expect(redis.incr).toHaveBeenCalledWith('notif:feed:ver:u1');
   });
 
   it('notifyArtistFollowers crée notifs + push Expo', async () => {
@@ -110,6 +136,8 @@ describe('NotificationsService', () => {
       'https://exp.host/--/api/v2/push/send',
       expect.objectContaining({ method: 'POST' }),
     );
+    expect(redis.incr).toHaveBeenCalledWith('notif:feed:ver:u1');
+    expect(redis.incr).toHaveBeenCalledWith('notif:feed:ver:u2');
   });
 
   it('notifyArtistFollowers no-op sans followers', async () => {
@@ -197,6 +225,7 @@ describe('NotificationsService', () => {
   it('markAllRead + deletePushToken', async () => {
     prisma.notification.updateMany.mockResolvedValue({ count: 3 });
     await expect(service.markAllRead('u1')).resolves.toEqual({ updated: 3 });
+    expect(redis.incr).toHaveBeenCalledWith('notif:feed:ver:u1');
 
     prisma.devicePushToken.deleteMany.mockResolvedValue({ count: 1 });
     await expect(

@@ -136,11 +136,11 @@ describe('AuthService', () => {
       expect(jwtService.signAsync).not.toHaveBeenCalled();
     });
 
-    it('crée un ARTIST + profil Artist (displayName = pseudo)', async () => {
+    it('crée un profil Artist PENDING sans rôle ARTIST (KYC Stripe requis)', async () => {
       prisma.user.findUnique.mockResolvedValue(null);
       const createdUser = {
         ...baseUser,
-        role: UserRole.ARTIST,
+        role: UserRole.LISTENER,
         emailVerifiedAt: null,
       };
       prisma.$transaction.mockImplementation(
@@ -151,6 +151,7 @@ describe('AuthService', () => {
         id: 'art1',
         userId: createdUser.id,
         displayName: 'alice',
+        kycStatus: 'PENDING',
       });
 
       const result = await service.register({
@@ -161,12 +162,19 @@ describe('AuthService', () => {
         acceptArtistTerms: true,
       });
 
+      expect(prisma.user.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          role: UserRole.LISTENER,
+        }),
+      });
       expect(prisma.artist.create).toHaveBeenCalledWith({
         data: {
           userId: createdUser.id,
           displayName: 'alice',
+          kycStatus: 'PENDING',
         },
       });
+      expect(result.message).toContain('KYC Stripe');
       expect(result.email).toBe('alice@example.com');
     });
 
@@ -249,6 +257,7 @@ describe('AuthService', () => {
       expect(bcrypt.compare).toHaveBeenCalledWith('Password1!', 'hashed');
       expect(result.accessToken).toBe('access-token');
       expect(result.sessionId).toBeDefined();
+      expect(redis.expire).toHaveBeenCalledWith('sessions:user-1', 604800);
       expect(redis.del).toHaveBeenCalledWith(
         'login:fail:alice@example.com',
         'login:lock:alice@example.com',
@@ -787,6 +796,27 @@ describe('AuthService', () => {
       expect(sessions).toHaveLength(2);
       expect(sessions[0].sessionId).toBe('s2');
       expect(sessions[1].sessionId).toBe('s1');
+    });
+
+    it('nettoie les sessions orphelines de l’index Redis', async () => {
+      redis.smembers.mockResolvedValue(['s1', 'stale']);
+      redis.getJson.mockImplementation(async (key: string) => {
+        if (key === 'session:user-1:s1') {
+          return {
+            sessionId: 's1',
+            jti: 'j1',
+            userId: 'user-1',
+            createdAt: '2026-07-01T00:00:00.000Z',
+            lastActiveAt: '2026-07-10T00:00:00.000Z',
+          };
+        }
+        return null;
+      });
+
+      const sessions = await service.listSessions('user-1');
+
+      expect(sessions).toHaveLength(1);
+      expect(redis.srem).toHaveBeenCalledWith('sessions:user-1', 'stale');
     });
   });
 

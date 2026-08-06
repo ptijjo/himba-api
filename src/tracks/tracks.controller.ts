@@ -9,10 +9,14 @@ import {
   Patch,
   Post,
   Query,
+  UploadedFile,
   UploadedFiles,
   UseInterceptors,
 } from '@nestjs/common';
-import { FileFieldsInterceptor } from '@nestjs/platform-express';
+import {
+  FileFieldsInterceptor,
+  FileInterceptor,
+} from '@nestjs/platform-express';
 import { Throttle } from '@nestjs/throttler';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
@@ -75,12 +79,19 @@ export class TracksController {
 
   @Patch(':id')
   @Roles(UserRole.ARTIST, UserRole.ADMIN)
+  @UseInterceptors(FileInterceptor('cover'))
   update(
     @Param('id') id: string,
     @CurrentUser() user: AuthenticatedUser,
     @Body() dto: UpdateTrackDto,
+    @UploadedFile() cover?: Express.Multer.File,
   ) {
-    return this.tracksService.update(id, { id: user.id, role: user.role }, dto);
+    return this.tracksService.update(
+      id,
+      { id: user.id, role: user.role },
+      dto,
+      cover,
+    );
   }
 
   @Delete(':id')

@@ -197,20 +197,45 @@ export class TracksService {
     trackId: string,
     actor: TrackAccessActor,
     dto: UpdateTrackDto,
+    cover?: Express.Multer.File,
   ): Promise<PublicTrack> {
     const track = await this.requireTrack(trackId);
     await this.assertTrackOwner(track, actor);
     if (dto.price !== undefined) {
       this.assertPrice(dto.price);
     }
+
+    const data: {
+      title?: string;
+      genre?: TrackGenre;
+      price?: number | null;
+      durationMs?: number;
+      coverUrl?: string;
+    } = {};
+    if (dto.title !== undefined) {
+      data.title = dto.title.trim();
+    }
+    if (dto.genre !== undefined) {
+      data.genre = dto.genre;
+    }
+    if (dto.price !== undefined) {
+      data.price = dto.price;
+    }
+    if (dto.durationMs !== undefined) {
+      data.durationMs = dto.durationMs;
+    }
+    if (cover) {
+      const uploaded = await this.storage.uploadImage(
+        cover,
+        'cover',
+        `tracks/${track.artistId}/covers`,
+      );
+      data.coverUrl = uploaded.publicUrl ?? `r2://${uploaded.objectKey}`;
+    }
+
     const updated = await this.prisma.track.update({
       where: { id: trackId },
-      data: {
-        title: dto.title?.trim(),
-        genre: dto.genre,
-        price: dto.price === undefined ? undefined : dto.price,
-        durationMs: dto.durationMs,
-      },
+      data,
       include: trackPublicInclude,
     });
     return this.toPublicTrack(updated);

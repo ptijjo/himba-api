@@ -1,8 +1,10 @@
 import {
   BadRequestException,
   ConflictException,
+  Inject,
   Injectable,
   NotFoundException,
+  forwardRef,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import Stripe from 'stripe';
@@ -12,6 +14,7 @@ import {
   toStripeCents,
 } from '../common/money/money';
 import { Prisma } from '../generated/prisma/client';
+import { ArtistsService } from '../artists/artists.service';
 import { PrismaService } from '../prisma/prisma.service';
 
 type PaymentKind = 'track' | 'album';
@@ -25,6 +28,8 @@ export class PaymentsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly configService: ConfigService,
+    @Inject(forwardRef(() => ArtistsService))
+    private readonly artistsService: ArtistsService,
   ) {
     const secretKey =
       this.configService.get<string>('STRIPE_SECRET_KEY') || 'sk_test_placeholder';
@@ -63,6 +68,7 @@ export class PaymentsService {
     const stripeAmount = toStripeCents(amount);
 
     // 1. PaymentIntent titre (Stripe = centimes)
+    // MVP : carte uniquement — autres moyens (Klarna, Bancontact, …) plus tard.
     const intent = await this.stripe.paymentIntents.create({
       amount: stripeAmount,
       currency: 'eur',
@@ -72,7 +78,7 @@ export class PaymentsService {
         trackId,
         amount: amount.toFixed(2),
       },
-      automatic_payment_methods: { enabled: true },
+      payment_method_types: ['card'],
     });
 
     return {
@@ -104,6 +110,7 @@ export class PaymentsService {
     const amount = money(album.price);
     const stripeAmount = toStripeCents(amount);
 
+    // MVP : carte uniquement — autres moyens plus tard.
     const intent = await this.stripe.paymentIntents.create({
       amount: stripeAmount,
       currency: 'eur',
@@ -113,7 +120,7 @@ export class PaymentsService {
         albumId,
         amount: amount.toFixed(2),
       },
-      automatic_payment_methods: { enabled: true },
+      payment_method_types: ['card'],
     });
 
     return {
@@ -138,6 +145,24 @@ export class PaymentsService {
       );
     } catch {
       throw new BadRequestException('Signature Stripe invalide');
+    }
+
+    // Connect KYC artiste
+    if (event.type === 'account.updated') {
+      await this.artistsService.syncStripeAccount(
+        event.data.object as Stripe.Account,
+      );
+      return;
+    }
+    if (event.type === 'account.application.deauthorized') {
+      const accountId =
+        typeof event.account === 'string'
+          ? event.account
+          : (event.data.object as { id?: string }).id;
+      if (accountId) {
+        await this.artistsService.handleConnectDeauthorized(accountId);
+      }
+      return;
     }
 
     if (event.type !== 'payment_intent.succeeded') {

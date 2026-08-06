@@ -21,6 +21,13 @@ enum UserStatus {
   BANNED
 }
 
+/** KYC Stripe Connect Express — upload / rôle ARTIST seulement si VERIFIED. */
+enum ArtistKycStatus {
+  PENDING
+  RESTRICTED
+  VERIFIED
+}
+
 enum NotificationType {
   TRACK_RELEASE
   ALBUM_RELEASE
@@ -119,6 +126,7 @@ model LoginAttempt {
 
   @@index([userId, createdAt])
   @@index([loginNormalized, createdAt])
+  @@index([success, createdAt])
   @@map("login_attempts")
 }
 
@@ -128,6 +136,14 @@ model Artist {
   displayName String
   bio         String?
   coverUrl    String?
+  /** Compte Stripe Connect Express (acct_…). */
+  stripeAccountId String? @unique
+  kycStatus       ArtistKycStatus @default(PENDING)
+  chargesEnabled  Boolean @default(false)
+  payoutsEnabled  Boolean @default(false)
+  detailsSubmitted Boolean @default(false)
+  /** requirements.currently_due Stripe — docs manquants côté app. */
+  stripeRequirementsDue String[] @default([])
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
@@ -137,6 +153,7 @@ model Artist {
   follows  Follow[]
   ratings  Rating[]
 
+  @@index([kycStatus])
   @@map("artists")
 }
 
@@ -371,6 +388,7 @@ model Notification {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, createdAt])
+  @@index([userId, readAt])
   @@map("notifications")
 }
 

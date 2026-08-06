@@ -8,6 +8,7 @@ import {
 } from '../generated/prisma/client';
 import { parseLimit } from '../common/pagination/cursor.dto';
 import { PrismaService } from '../prisma/prisma.service';
+import { RedisService } from '../redis/redis.service';
 import {
   ReportSanction,
   REPORT_SANCTION_TARGET_BODY,
@@ -41,13 +42,17 @@ export type ReleaseNotifyPayload = NotifyPayload;
 
 const EXPO_PUSH_URL = 'https://exp.host/--/api/v2/push/send';
 const PUSH_CHUNK = 100;
+const NOTIFICATIONS_FEED_TTL_SECONDS = 30;
 
 
 @Injectable()
 export class NotificationsService {
   private readonly logger = new Logger(NotificationsService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly redis: RedisService,
+  ) {}
 
   upsertPushToken(
     userId: string,
@@ -69,6 +74,16 @@ export class NotificationsService {
 
   async listMine(userId: string, cursor?: string, limit?: number) {
     const take = parseLimit(limit);
+    const version = await this.getFeedVersion(userId);
+    const cacheKey = this.feedCacheKey(userId, version, cursor, take);
+    const cached = await this.redis.getJson<{
+      items: unknown[];
+      nextCursor: string | null;
+    }>(cacheKey);
+    if (cached) {
+      return cached;
+    }
+
     const items = await this.prisma.notification.findMany({
       where: { userId },
       take: take + 1,
@@ -77,10 +92,12 @@ export class NotificationsService {
     });
     const hasMore = items.length > take;
     const page = hasMore ? items.slice(0, take) : items;
-    return {
+    const result = {
       items: page,
       nextCursor: hasMore ? page[page.length - 1]?.id ?? null : null,
     };
+    await this.redis.setJson(cacheKey, result, NOTIFICATIONS_FEED_TTL_SECONDS);
+    return result;
   }
 
   async markRead(userId: string, notificationId: string) {
@@ -93,10 +110,12 @@ export class NotificationsService {
     if (row.readAt) {
       return row;
     }
-    return this.prisma.notification.update({
+    const updated = await this.prisma.notification.update({
       where: { id: notificationId },
       data: { readAt: new Date() },
     });
+    await this.invalidateUserFeed(userId);
+    return updated;
   }
 
   async markAllRead(userId: string): Promise<{ updated: number }> {
@@ -104,6 +123,7 @@ export class NotificationsService {
       where: { userId, readAt: null },
       data: { readAt: new Date() },
     });
+    await this.invalidateUserFeed(userId);
     return { updated: result.count };
   }
 
@@ -116,6 +136,7 @@ export class NotificationsService {
       throw new NotFoundException('Notification introuvable');
     }
     await this.prisma.notification.delete({ where: { id: notificationId } });
+    await this.invalidateUserFeed(userId);
   }
 
   /** Vide le fil Actus de l’utilisateur. */
@@ -123,6 +144,7 @@ export class NotificationsService {
     const result = await this.prisma.notification.deleteMany({
       where: { userId },
     });
+    await this.invalidateUserFeed(userId);
     return { deleted: result.count };
   }
 
@@ -351,6 +373,7 @@ export class NotificationsService {
         data,
       })),
     });
+    await this.invalidateUsersFeeds(userIds);
 
     const tokens = await this.prisma.devicePushToken.findMany({
       where: { userId: { in: userIds } },
@@ -406,6 +429,39 @@ export class NotificationsService {
       if (!res.ok) {
         throw new Error(`Expo Push HTTP ${res.status}`);
       }
+    }
+  }
+
+  private feedVersionKey(userId: string): string {
+    return `notif:feed:ver:${userId}`;
+  }
+
+  private feedCacheKey(
+    userId: string,
+    version: number,
+    cursor: string | undefined,
+    limit: number,
+  ): string {
+    return `notif:feed:${userId}:v${version}:${cursor ?? 'first'}:${limit}`;
+  }
+
+  private async getFeedVersion(userId: string): Promise<number> {
+    const raw = await this.redis.get(this.feedVersionKey(userId));
+    if (!raw) {
+      return 0;
+    }
+    const parsed = Number(raw);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+
+  private async invalidateUserFeed(userId: string): Promise<void> {
+    await this.redis.incr(this.feedVersionKey(userId));
+  }
+
+  private async invalidateUsersFeeds(userIds: string[]): Promise<void> {
+    const uniqueUserIds = [...new Set(userIds)];
+    for (const userId of uniqueUserIds) {
+      await this.invalidateUserFeed(userId);
     }
   }
 }

@@ -12,6 +12,7 @@ describe('ArtistsController', () => {
     findById: jest.Mock;
     findByUserId: jest.Mock;
     update: jest.Mock;
+    createOnboardingLink: jest.Mock;
   };
 
   beforeEach(async () => {
@@ -20,6 +21,7 @@ describe('ArtistsController', () => {
       findById: jest.fn(),
       findByUserId: jest.fn(),
       update: jest.fn(),
+      createOnboardingLink: jest.fn(),
     };
     const module: TestingModule = await Test.createTestingModule({
       controllers: [ArtistsController],
@@ -45,6 +47,17 @@ describe('ArtistsController', () => {
   it('me délègue findByUserId', async () => {
     await controller.me(mockAuthenticatedUser());
     expect(artistsService.findByUserId).toHaveBeenCalledWith('user-1');
+  });
+
+  it('createOnboardingLink délègue', async () => {
+    await controller.createOnboardingLink(mockAuthenticatedUser());
+    expect(artistsService.createOnboardingLink).toHaveBeenCalledWith('user-1');
+  });
+
+  it('stripeReturn / stripeRefresh rendent du HTML', () => {
+    expect(controller.stripeReturn()).toContain('KYC Stripe terminé');
+    expect(controller.stripeRefresh()).toContain('Lien Stripe expiré');
+    expect(controller.stripeReturn()).toContain('himba://artist/kyc');
   });
 
   it('findOne / update délèguent', async () => {
