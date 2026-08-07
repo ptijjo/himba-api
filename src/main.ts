@@ -13,9 +13,9 @@ import {
 } from './common/security/security-config';
 
 async function bootstrap() {
-  // rawBody: true — requis pour vérifier la signature du webhook Stripe
+  // rawBody via verify express — bodyParser Nest désactivé pour éviter double parse
   const app = await NestFactory.create<NestExpressApplication>(AppModule, {
-    rawBody: true,
+    bodyParser: false,
   });
   const configService = app.get(ConfigService);
   const nodeEnv = configService.get<string>('NODE_ENV', 'development');
@@ -35,8 +35,15 @@ async function bootstrap() {
   // 2. Helmet (CSP, frameguard, nosniff, HSTS en prod…)
   app.use(helmet(buildHelmetOptions(nodeEnv)));
 
-  // 3. Limiter la taille des body JSON (auth / API) — uploads binaires = routes dédiées plus tard
-  app.use(json({ limit: '100kb' }));
+  // 3. Body JSON — rawBody conservé pour constructEvent Stripe webhook
+  app.use(
+    json({
+      limit: '100kb',
+      verify: (req, _res, buf: Buffer) => {
+        (req as { rawBody?: Buffer }).rawBody = buf;
+      },
+    }),
+  );
   app.use(urlencoded({ extended: false, limit: '100kb' }));
 
   // 4. Validation stricte des DTOs
@@ -57,7 +64,12 @@ async function bootstrap() {
     origin: origins.length > 0 ? origins : false,
     credentials: false,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Authorization', 'Content-Type', 'Accept'],
+    allowedHeaders: [
+      'Authorization',
+      'Content-Type',
+      'Accept',
+      'stripe-signature',
+    ],
   });
 
   // 7. Swagger uniquement hors production

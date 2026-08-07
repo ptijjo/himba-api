@@ -147,11 +147,22 @@ export class PaymentsService {
       throw new BadRequestException('Signature Stripe invalide');
     }
 
-    // Connect KYC artiste
+    // Connect KYC artiste (Accounts v1 interop + Events v2)
     if (event.type === 'account.updated') {
-      await this.artistsService.syncStripeAccount(
-        event.data.object as Stripe.Account,
-      );
+      const account = event.data.object as Stripe.Account;
+      await this.artistsService.syncStripeAccount(account);
+      return;
+    }
+    // Event types v2 absents du union Stripe.Event typé → comparaison via string
+    const eventType = event.type as string;
+    if (
+      eventType === 'v2.core.account[requirements].updated' ||
+      eventType === 'v2.core.account.updated'
+    ) {
+      const relatedId = extractV2RelatedAccountId(event);
+      if (relatedId) {
+        await this.artistsService.syncStripeAccountById(relatedId);
+      }
       return;
     }
     if (event.type === 'account.application.deauthorized') {
@@ -520,5 +531,22 @@ function buildMonthlySeries(
     label: key,
     ...roundAmount(bucket),
   }));
+}
+
+/** Id compte Connect depuis un event v2 (related_object ou data.object). */
+function extractV2RelatedAccountId(event: Stripe.Event): string | null {
+  const related = (
+    event as Stripe.Event & {
+      related_object?: { id?: string; type?: string };
+    }
+  ).related_object;
+  if (related?.id && typeof related.id === 'string') {
+    return related.id;
+  }
+  const obj = event.data?.object as { id?: string } | undefined;
+  if (obj?.id && typeof obj.id === 'string') {
+    return obj.id;
+  }
+  return null;
 }
 

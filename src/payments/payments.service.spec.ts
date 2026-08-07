@@ -20,6 +20,7 @@ describe('PaymentsService', () => {
   let constructEvent: jest.Mock;
   let artistsService: {
     syncStripeAccount: jest.Mock;
+    syncStripeAccountById: jest.Mock;
     handleConnectDeauthorized: jest.Mock;
   };
 
@@ -29,6 +30,7 @@ describe('PaymentsService', () => {
     constructEvent = jest.fn();
     artistsService = {
       syncStripeAccount: jest.fn(),
+      syncStripeAccountById: jest.fn(),
       handleConnectDeauthorized: jest.fn(),
     };
 
@@ -230,6 +232,20 @@ describe('PaymentsService', () => {
 
     expect(artistsService.syncStripeAccount).toHaveBeenCalledWith(account);
     expect(prisma.purchase.create).not.toHaveBeenCalled();
+  });
+
+  it('webhook v2 requirements.updated délègue syncById', async () => {
+    constructEvent.mockReturnValue({
+      type: 'v2.core.account[requirements].updated',
+      related_object: { id: 'acct_v2', type: 'v2.core.account' },
+      data: { object: { id: 'acct_v2' } },
+    });
+
+    await service.handleWebhook(Buffer.from('{}'), 'sig');
+
+    expect(artistsService.syncStripeAccountById).toHaveBeenCalledWith(
+      'acct_v2',
+    );
   });
 
   it('webhook account.application.deauthorized délègue', async () => {

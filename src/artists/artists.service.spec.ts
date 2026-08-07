@@ -30,6 +30,7 @@ describe('ArtistsService', () => {
   };
   let accountsCreate: jest.Mock;
   let accountLinksCreate: jest.Mock;
+  let accountsRetrieve: jest.Mock;
 
   const emptySummary = { average: null, count: 0, myValue: null };
 
@@ -64,10 +65,18 @@ describe('ArtistsService', () => {
     };
     accountsCreate = jest.fn();
     accountLinksCreate = jest.fn();
+    accountsRetrieve = jest.fn();
     paymentsService = {
       getStripe: jest.fn().mockReturnValue({
-        accounts: { create: accountsCreate },
-        accountLinks: { create: accountLinksCreate },
+        v2: {
+          core: {
+            accounts: {
+              create: accountsCreate,
+              retrieve: accountsRetrieve,
+            },
+            accountLinks: { create: accountLinksCreate },
+          },
+        },
       }),
     };
     const module: TestingModule = await Test.createTestingModule({
@@ -128,7 +137,7 @@ describe('ArtistsService', () => {
     ).rejects.toBeInstanceOf(ConflictException);
   });
 
-  it('createOnboardingLink crée un compte Express + Account Link', async () => {
+  it('createOnboardingLink crée un compte Connect v2 + Account Link', async () => {
     prisma.artist.findUnique.mockResolvedValue(artist);
     prisma.user.findUnique.mockResolvedValue({
       id: 'u1',
@@ -146,12 +155,18 @@ describe('ArtistsService', () => {
     const result = await service.createOnboardingLink('u1');
 
     expect(accountsCreate).toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'express', country: 'FR' }),
+      expect.objectContaining({
+        dashboard: 'express',
+        contact_email: 'alice@example.com',
+        identity: { country: 'FR' },
+      }),
     );
     expect(accountLinksCreate).toHaveBeenCalledWith(
       expect.objectContaining({
         account: 'acct_1',
-        type: 'account_onboarding',
+        use_case: expect.objectContaining({
+          type: 'account_onboarding',
+        }),
       }),
     );
     expect(result).toEqual({
