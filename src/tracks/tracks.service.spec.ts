@@ -110,6 +110,17 @@ describe('TracksService', () => {
     });
   });
 
+  it('stream payant ADMIN sans Purchase OK', async () => {
+    prisma.track.findUnique.mockResolvedValue(paidTrack);
+
+    await expect(
+      service.getStreamUrl('t-paid', 'admin-1', UserRole.ADMIN),
+    ).resolves.toMatchObject({
+      url: expect.any(String),
+    });
+    expect(prisma.purchase.findUnique).not.toHaveBeenCalled();
+  });
+
   it('stream payant sans Purchase → 403', async () => {
     prisma.track.findUnique.mockResolvedValue(paidTrack);
     prisma.purchase.findUnique.mockResolvedValue(null);

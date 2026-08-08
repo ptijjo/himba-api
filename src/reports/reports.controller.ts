@@ -7,6 +7,7 @@ import {
   Post,
   Query,
 } from '@nestjs/common';
+import { SkipThrottle } from '@nestjs/throttler';
 import { UserRole } from '../generated/prisma/client';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Roles } from '../auth/decorators/roles.decorator';
@@ -30,12 +31,14 @@ export class ReportsController {
 
   @Get('moderation/reports')
   @Roles(UserRole.ADMIN)
+  @SkipThrottle()
   listForModeration(@Query() query: CursorPaginationQueryDto) {
     return this.reportsService.listForModeration(query.cursor, query.limit);
   }
 
   @Patch('moderation/reports/:id')
   @Roles(UserRole.ADMIN)
+  @SkipThrottle()
   updateStatus(
     @Param('id') id: string,
     @Body() dto: UpdateReportStatusDto,

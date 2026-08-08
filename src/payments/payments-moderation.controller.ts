@@ -1,9 +1,11 @@
 import { Controller, Get } from '@nestjs/common';
+import { SkipThrottle } from '@nestjs/throttler';
 import { UserRole } from '../generated/prisma/client';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { PaymentsService } from './payments.service';
 
 /** Stats ventes — ADMIN uniquement (back-office himba-admin). */
+@SkipThrottle()
 @Controller()
 export class PaymentsModerationController {
   constructor(private readonly paymentsService: PaymentsService) {}

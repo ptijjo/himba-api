@@ -77,6 +77,41 @@ export class StorageService {
   }
 
   /**
+   * Cover neutre (modération) — remplace une couverture album retirée.
+   * Album.coverUrl est obligatoire : on ne peut pas laisser null.
+   */
+  async createPlaceholderCover(
+    folder: string,
+  ): Promise<{ objectKey: string; publicUrl: string | null }> {
+    const webp = await sharp({
+      create: {
+        width: 800,
+        height: 800,
+        channels: 3,
+        background: { r: 36, g: 36, b: 40 },
+      },
+    })
+      .webp({ quality: 70 })
+      .toBuffer();
+
+    const objectKey = `${folder}/${randomUUID()}.webp`;
+    await this.s3.send(
+      new PutObjectCommand({
+        Bucket: this.bucket,
+        Key: objectKey,
+        Body: webp,
+        ContentType: 'image/webp',
+      }),
+    );
+
+    const publicUrl = this.publicBaseUrl
+      ? `${this.publicBaseUrl}/${objectKey}`
+      : null;
+
+    return { objectKey, publicUrl };
+  }
+
+  /**
    * Upload audio — sniffe le conteneur (M4A / ADTS / MP3), normalise Content-Type.
    * Recommandé : M4A + AAC-LC ; MP3 accepté tel quel (pas de transcodage).
    */

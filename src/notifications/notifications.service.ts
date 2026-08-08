@@ -332,6 +332,44 @@ export class NotificationsService {
     );
   }
 
+  /**
+   * Avertissement / sanction suite à un contrôle catalogue (hors signalement).
+   * Réutilise REPORT_SANCTION pour Actus mobile.
+   */
+  async notifyModerationReview(input: {
+    artistUserId: string;
+    targetType: ReportTargetType;
+    targetId: string;
+    sanction: ReportSanction;
+    note?: string | null;
+    title?: string;
+    bodyOverride?: string;
+  }): Promise<void> {
+    let body =
+      input.bodyOverride?.trim() ||
+      REPORT_SANCTION_TARGET_BODY[input.sanction];
+    const note = input.note?.trim();
+    if (note) {
+      body += `\n\nDétail de l’équipe : ${note}`;
+    }
+    const targetLabel = REPORT_TARGET_LABEL[input.targetType];
+    await this.createAndPush(
+      [input.artistUserId],
+      {
+        type: NotificationType.REPORT_SANCTION,
+        title: input.title?.trim() || `Contrôle Himba — ${targetLabel}`,
+        body,
+        data: {
+          targetType: input.targetType,
+          targetId: input.targetId,
+          sanction: input.sanction,
+          audience: 'target',
+        },
+      },
+      `content-review ${input.targetType}:${input.targetId} → ${input.artistUserId}`,
+    );
+  }
+
   private buildReporterPayload(
     status: ReportStatus,
     baseData: NotifyData,

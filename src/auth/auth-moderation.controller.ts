@@ -9,6 +9,7 @@ import {
   Res,
 } from '@nestjs/common';
 import type { Response } from 'express';
+import { SkipThrottle } from '@nestjs/throttler';
 import { UserRole } from '../generated/prisma/client';
 import { AuthService } from './auth.service';
 import { Public } from './decorators/public.decorator';
@@ -22,6 +23,7 @@ import {
  * Moniteur sécurité auth — ADMIN uniquement (sauf page HTML shell).
  * Aligné sur /moderation/reports.
  */
+@SkipThrottle()
 @Controller()
 export class AuthModerationController {
   constructor(private readonly authService: AuthService) {}

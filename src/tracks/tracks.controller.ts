@@ -106,11 +106,11 @@ export class TracksController {
 
   @Get(':id/stream')
   stream(@Param('id') id: string, @CurrentUser() user: AuthenticatedUser) {
-    return this.tracksService.getStreamUrl(id, user.id);
+    return this.tracksService.getStreamUrl(id, user.id, user.role);
   }
 
   @Get(':id/download')
   download(@Param('id') id: string, @CurrentUser() user: AuthenticatedUser) {
-    return this.tracksService.getDownloadUrl(id, user.id);
+    return this.tracksService.getDownloadUrl(id, user.id, user.role);
   }
 }

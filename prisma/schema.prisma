@@ -63,6 +63,25 @@ enum ReportStatus {
   DISMISSED
 }
 
+/** Décision d’un contrôle catalogue (aléatoire ou ciblé). */
+enum ContentReviewOutcome {
+  OK
+  WARNING
+  CONTENT_REMOVED
+  /** Couverture retirée / remplacée (titre ou album). */
+  COVER_REMOVED
+  RESTRICTED
+  BANNED
+}
+
+/** Cible d’un contrôle catalogue. */
+enum ContentReviewTargetType {
+  TRACK
+  ALBUM
+  TRACK_COVER
+  ALBUM_COVER
+}
+
 /// Genres catalogue — ajouter une valeur = migration Prisma.
 enum TrackGenre {
   RAP
@@ -106,10 +125,33 @@ model User {
   notifications   Notification[]
   reportsFiled    Report[]         @relation("ReportsFiled")
   loginAttempts   LoginAttempt[]
+  contentReviews  ContentReview[]  @relation("ContentReviewsBy")
 
   @@index([email])
   @@index([username])
   @@map("users")
+}
+
+/**
+ * Historique des contrôles catalogue (aléatoires ou depuis un signalement).
+ * Sert à éviter de re-tirer trop souvent un titre déjà marqué OK.
+ */
+model ContentReview {
+  id         String                  @id @default(cuid())
+  targetType ContentReviewTargetType
+  targetId   String
+  reviewerId String
+  outcome    ContentReviewOutcome
+  note       String?
+  createdAt  DateTime                @default(now())
+
+  reviewer User @relation("ContentReviewsBy", fields: [reviewerId], references: [id], onDelete: Cascade)
+
+  @@index([targetType, targetId, createdAt])
+  @@index([outcome, createdAt])
+  @@index([createdAt])
+  @@index([reviewerId, createdAt])
+  @@map("content_reviews")
 }
 
 /** Audit des tentatives de connexion (succès / échec) — historique user + lockout. */

@@ -7,6 +7,7 @@ import {
   Patch,
   Query,
 } from '@nestjs/common';
+import { SkipThrottle } from '@nestjs/throttler';
 import { UserRole } from '../generated/prisma/client';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { AdminUpdateUserDto } from './dto/admin-update-user.dto';
@@ -16,6 +17,7 @@ import { UsersService } from './users.service';
 /**
  * Modération utilisateurs — ADMIN uniquement (back-office himba-admin).
  */
+@SkipThrottle()
 @Controller()
 export class UsersModerationController {
   constructor(private readonly usersService: UsersService) {}

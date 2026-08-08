@@ -44,7 +44,11 @@ describe('TracksController', () => {
 
   it('stream délègue', async () => {
     await controller.stream('t1', mockAuthenticatedUser());
-    expect(tracksService.getStreamUrl).toHaveBeenCalledWith('t1', 'user-1');
+    expect(tracksService.getStreamUrl).toHaveBeenCalledWith(
+      't1',
+      'user-1',
+      UserRole.LISTENER,
+    );
   });
 
   it('list / findOne / download délèguent', async () => {
@@ -60,7 +64,11 @@ describe('TracksController', () => {
     );
     expect(tracksService.listGenres).toHaveBeenCalled();
     expect(tracksService.findById).toHaveBeenCalledWith('t1', 'user-1');
-    expect(tracksService.getDownloadUrl).toHaveBeenCalledWith('t1', 'user-1');
+    expect(tracksService.getDownloadUrl).toHaveBeenCalledWith(
+      't1',
+      'user-1',
+      UserRole.LISTENER,
+    );
   });
 
   it('create / update / remove délèguent', async () => {

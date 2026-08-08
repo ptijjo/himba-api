@@ -250,9 +250,10 @@ export class TracksService {
   async getStreamUrl(
     trackId: string,
     userId: string,
+    role?: UserRole,
   ): Promise<{ url: string; expiresInSeconds: number }> {
     const track = await this.requireTrack(trackId);
-    await this.assertCanStream(track, userId);
+    await this.assertCanStream(track, userId, role);
     const url = await this.storage.getSignedUrl(track.audioObjectKey);
     return {
       url,
@@ -265,10 +266,11 @@ export class TracksService {
   async getDownloadUrl(
     trackId: string,
     userId: string,
+    role?: UserRole,
   ): Promise<{ url: string; expiresInSeconds: number }> {
     const track = await this.requireTrack(trackId);
-    // Gratuit : download OK ; payant : Purchase requis
-    await this.assertCanDownload(track, userId);
+    // Gratuit : download OK ; payant : Purchase requis (ADMIN bypass)
+    await this.assertCanDownload(track, userId, role);
     const url = await this.storage.getSignedUrl(track.audioObjectKey);
     return {
       url,
@@ -278,7 +280,14 @@ export class TracksService {
     };
   }
 
-  private async assertCanStream(track: Track, userId: string): Promise<void> {
+  private async assertCanStream(
+    track: Track,
+    userId: string,
+    role?: UserRole,
+  ): Promise<void> {
+    if (role === UserRole.ADMIN) {
+      return;
+    }
     if (track.price === null) {
       return;
     }
@@ -288,7 +297,14 @@ export class TracksService {
     throw new ForbiddenException('Achat requis pour streamer ce titre');
   }
 
-  private async assertCanDownload(track: Track, userId: string): Promise<void> {
+  private async assertCanDownload(
+    track: Track,
+    userId: string,
+    role?: UserRole,
+  ): Promise<void> {
+    if (role === UserRole.ADMIN) {
+      return;
+    }
     if (track.price === null) {
       return;
     }
