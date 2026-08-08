@@ -22,12 +22,16 @@ import { ReportSanction } from './report-sanction';
 describe('ReportsService', () => {
   let service: ReportsService;
   let prisma: MockPrismaService;
-  let notifications: { notifyReportStatusUpdate: jest.Mock };
+  let notifications: {
+    notifyReportStatusUpdate: jest.Mock;
+    notifyAdminsOfNewReport: jest.Mock;
+  };
 
   beforeEach(async () => {
     prisma = createMockPrismaService();
     notifications = {
       notifyReportStatusUpdate: jest.fn().mockResolvedValue(undefined),
+      notifyAdminsOfNewReport: jest.fn().mockResolvedValue(undefined),
     };
     const module: TestingModule = await Test.createTestingModule({
       providers: [
@@ -45,6 +49,7 @@ describe('ReportsService', () => {
       .mockResolvedValueOnce({ artist: { userId: 'owner' } });
     prisma.report.create.mockResolvedValue({
       id: 'r1',
+      reporterId: 'u1',
       targetType: ReportTargetType.TRACK,
       targetId: 't1',
       reason: ReportReason.INAPPROPRIATE_CONTENT,
@@ -57,6 +62,13 @@ describe('ReportsService', () => {
         reason: ReportReason.INAPPROPRIATE_CONTENT,
       }),
     ).resolves.toMatchObject({ id: 'r1' });
+    expect(notifications.notifyAdminsOfNewReport).toHaveBeenCalledWith({
+      reportId: 'r1',
+      targetType: ReportTargetType.TRACK,
+      targetId: 't1',
+      reason: ReportReason.INAPPROPRIATE_CONTENT,
+      reporterId: 'u1',
+    });
   });
 
   it('create ALBUM OK', async () => {
@@ -65,6 +77,7 @@ describe('ReportsService', () => {
       .mockResolvedValueOnce({ artist: { userId: 'owner' } });
     prisma.report.create.mockResolvedValue({
       id: 'r-alb',
+      reporterId: 'u1',
       targetType: ReportTargetType.ALBUM,
       targetId: 'alb1',
       reason: ReportReason.COPYRIGHT,
@@ -77,6 +90,31 @@ describe('ReportsService', () => {
         reason: ReportReason.COPYRIGHT,
       }),
     ).resolves.toMatchObject({ id: 'r-alb' });
+    expect(notifications.notifyAdminsOfNewReport).toHaveBeenCalled();
+  });
+
+  it('create notifie les admins même si push échoue', async () => {
+    prisma.track.findUnique
+      .mockResolvedValueOnce({ id: 't1' })
+      .mockResolvedValueOnce({ artist: { userId: 'owner' } });
+    prisma.report.create.mockResolvedValue({
+      id: 'r2',
+      reporterId: 'u1',
+      targetType: ReportTargetType.TRACK,
+      targetId: 't1',
+      reason: ReportReason.SPAM,
+    });
+    notifications.notifyAdminsOfNewReport.mockRejectedValue(
+      new Error('push down'),
+    );
+
+    await expect(
+      service.create('u1', {
+        targetType: ReportTargetType.TRACK,
+        targetId: 't1',
+        reason: ReportReason.SPAM,
+      }),
+    ).resolves.toMatchObject({ id: 'r2' });
   });
 
   it('refuse auto-signalement ALBUM', async () => {

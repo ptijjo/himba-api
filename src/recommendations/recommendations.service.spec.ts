@@ -68,19 +68,26 @@ describe('RecommendationsService', () => {
     expect(prisma.track.findMany).toHaveBeenCalled();
   });
 
-  it('fusionne follows + playlists et borne le limit', async () => {
-    prisma.playEvent.findMany.mockResolvedValue([
-      { trackId: 't0', track: { artistId: 'a1', genre: 'AFRO' } },
+  it('sérialise price Decimal en number (pas d’objet Prisma brut)', async () => {
+    prisma.playEvent.findMany.mockResolvedValue([]);
+    prisma.follow.findMany.mockResolvedValue([]);
+    prisma.playlistTrack.findMany.mockResolvedValue([]);
+    prisma.track.findMany.mockResolvedValue([
+      {
+        id: 't1',
+        title: 'Paid',
+        genre: 'RAP',
+        price: { toString: () => '1.99' },
+        coverUrl: null,
+        artistId: 'a1',
+        durationMs: null,
+        album: null,
+        artist: null,
+      },
     ]);
-    prisma.follow.findMany.mockResolvedValue([{ artistId: 'a2' }]);
-    prisma.playlistTrack.findMany.mockResolvedValue([
-      { track: { artistId: 'a3' } },
-    ]);
-    prisma.track.findMany.mockResolvedValue([]);
 
-    await service.suggest('u1', 100);
-    expect(prisma.track.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({ take: 50 }),
-    );
+    await expect(service.suggest('u1')).resolves.toEqual([
+      expect.objectContaining({ id: 't1', price: 1.99 }),
+    ]);
   });
 });

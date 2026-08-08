@@ -19,6 +19,36 @@ import { PrismaService } from '../prisma/prisma.service';
 
 type PaymentKind = 'track' | 'album';
 
+export type UserPurchaseItem =
+  | {
+      kind: 'track';
+      id: string;
+      amount: number;
+      createdAt: string;
+      track: {
+        id: string;
+        title: string;
+        coverUrl: string | null;
+        artist?: { id: string; displayName: string };
+      };
+    }
+  | {
+      kind: 'album';
+      id: string;
+      amount: number;
+      createdAt: string;
+      album: {
+        id: string;
+        title: string;
+        coverUrl: string | null;
+        artist?: { id: string; displayName: string };
+      };
+    };
+
+export type UserPurchasesResponse = {
+  items: UserPurchaseItem[];
+};
+
 @Injectable()
 export class PaymentsService {
   private readonly stripe: Stripe;
@@ -46,6 +76,93 @@ export class PaymentsService {
 
   getStripe(): Stripe {
     return this.stripe;
+  }
+
+  /**
+   * Catalogue d’achats de l’utilisateur (titres + albums), du plus récent au plus ancien.
+   * Pas de champs commission / Stripe — usage auditeur uniquement.
+   */
+  async listPurchasesForUser(userId: string): Promise<UserPurchasesResponse> {
+    const trackSelect = {
+      id: true,
+      title: true,
+      coverUrl: true,
+      album: { select: { coverUrl: true } },
+      artist: { select: { id: true, displayName: true } },
+    } as const;
+    const albumSelect = {
+      id: true,
+      title: true,
+      coverUrl: true,
+      artist: { select: { id: true, displayName: true } },
+    } as const;
+
+    const [tracks, albums] = await Promise.all([
+      this.prisma.purchase.findMany({
+        where: { userId },
+        orderBy: { createdAt: 'desc' },
+        select: {
+          id: true,
+          amount: true,
+          createdAt: true,
+          track: { select: trackSelect },
+        },
+      }),
+      this.prisma.albumPurchase.findMany({
+        where: { userId },
+        orderBy: { createdAt: 'desc' },
+        select: {
+          id: true,
+          amount: true,
+          createdAt: true,
+          album: { select: albumSelect },
+        },
+      }),
+    ]);
+
+    const items: UserPurchaseItem[] = [
+      ...tracks.map((row) => ({
+        kind: 'track' as const,
+        id: row.id,
+        amount: decimalToNumber(row.amount),
+        createdAt: row.createdAt.toISOString(),
+        track: {
+          id: row.track.id,
+          title: row.track.title,
+          coverUrl: row.track.coverUrl ?? row.track.album?.coverUrl ?? null,
+          artist: row.track.artist
+            ? {
+                id: row.track.artist.id,
+                displayName: row.track.artist.displayName,
+              }
+            : undefined,
+        },
+      })),
+      ...albums.map((row) => ({
+        kind: 'album' as const,
+        id: row.id,
+        amount: decimalToNumber(row.amount),
+        createdAt: row.createdAt.toISOString(),
+        album: {
+          id: row.album.id,
+          title: row.album.title,
+          coverUrl: row.album.coverUrl,
+          artist: row.album.artist
+            ? {
+                id: row.album.artist.id,
+                displayName: row.album.artist.displayName,
+              }
+            : undefined,
+        },
+      })),
+    ];
+
+    items.sort(
+      (a, b) =>
+        new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+    );
+
+    return { items };
   }
 
   async createTrackPaymentIntent(userId: string, trackId: string) {

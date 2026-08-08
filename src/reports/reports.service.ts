@@ -33,8 +33,9 @@ export class ReportsService {
     await this.assertTargetExists(dto.targetType, dto.targetId);
     await this.assertNotSelfReport(reporterId, dto.targetType, dto.targetId);
 
+    let report;
     try {
-      return await this.prisma.report.create({
+      report = await this.prisma.report.create({
         data: {
           reporterId,
           targetType: dto.targetType,
@@ -52,6 +53,25 @@ export class ReportsService {
       }
       throw err;
     }
+
+    // 1. Alerte ADMIN (in-app + push) — échec non bloquant pour le signaleur
+    try {
+      await this.notifications.notifyAdminsOfNewReport({
+        reportId: report.id,
+        targetType: report.targetType,
+        targetId: report.targetId,
+        reason: report.reason,
+        reporterId: report.reporterId,
+      });
+    } catch (err) {
+      this.logger.warn(
+        `notifyAdminsOfNewReport échoué pour ${report.id}: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+    }
+
+    return report;
   }
 
   async listForModeration(cursor?: string, limit?: number) {

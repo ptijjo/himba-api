@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   Controller,
+  Get,
   Headers,
   Param,
   Post,
@@ -18,6 +19,12 @@ type RawBodyRequest = Request & { rawBody?: Buffer };
 @Controller()
 export class PaymentsController {
   constructor(private readonly paymentsService: PaymentsService) {}
+
+  /** Historique d’achats (titres + albums) pour l’utilisateur connecté. */
+  @Get('payments/purchases')
+  listPurchases(@CurrentUser() user: AuthenticatedUser) {
+    return this.paymentsService.listPurchasesForUser(user.id);
+  }
 
   @Post('payments/tracks/:trackId/intent')
   @Throttle({ global: { limit: 20, ttl: 60_000 } })

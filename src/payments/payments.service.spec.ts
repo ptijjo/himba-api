@@ -389,4 +389,63 @@ describe('PaymentsService', () => {
     await service.handleWebhook(Buffer.from('{}'), 'sig');
     expect(prisma.albumPurchase.create).not.toHaveBeenCalled();
   });
+
+  it('listPurchasesForUser fusionne titres + albums triés par date', async () => {
+    prisma.purchase.findMany.mockResolvedValue([
+      {
+        id: 'p-track',
+        amount: 1.99,
+        createdAt: new Date('2026-01-01T10:00:00.000Z'),
+        track: {
+          id: 't1',
+          title: 'Sunrise',
+          coverUrl: null,
+          album: { coverUrl: 'https://cdn/album.webp' },
+          artist: { id: 'a1', displayName: 'Nia' },
+        },
+      },
+    ]);
+    prisma.albumPurchase.findMany.mockResolvedValue([
+      {
+        id: 'p-album',
+        amount: 4.99,
+        createdAt: new Date('2026-02-01T10:00:00.000Z'),
+        album: {
+          id: 'alb1',
+          title: 'EP One',
+          coverUrl: 'https://cdn/ep.webp',
+          artist: { id: 'a1', displayName: 'Nia' },
+        },
+      },
+    ]);
+
+    await expect(service.listPurchasesForUser('u1')).resolves.toEqual({
+      items: [
+        {
+          kind: 'album',
+          id: 'p-album',
+          amount: 4.99,
+          createdAt: '2026-02-01T10:00:00.000Z',
+          album: {
+            id: 'alb1',
+            title: 'EP One',
+            coverUrl: 'https://cdn/ep.webp',
+            artist: { id: 'a1', displayName: 'Nia' },
+          },
+        },
+        {
+          kind: 'track',
+          id: 'p-track',
+          amount: 1.99,
+          createdAt: '2026-01-01T10:00:00.000Z',
+          track: {
+            id: 't1',
+            title: 'Sunrise',
+            coverUrl: 'https://cdn/album.webp',
+            artist: { id: 'a1', displayName: 'Nia' },
+          },
+        },
+      ],
+    });
+  });
 });

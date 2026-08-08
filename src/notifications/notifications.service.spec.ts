@@ -210,6 +210,46 @@ describe('NotificationsService', () => {
     expect(global.fetch).toHaveBeenCalled();
   });
 
+  it('notifyAdminsOfNewReport crée une notif par ADMIN (hors signaleur)', async () => {
+    prisma.user.findMany.mockResolvedValue([
+      { id: 'admin1' },
+      { id: 'admin2' },
+      { id: 'u-reporter' },
+    ]);
+    prisma.devicePushToken.findMany.mockResolvedValue([]);
+    prisma.notification.createMany.mockResolvedValue({ count: 2 });
+
+    await service.notifyAdminsOfNewReport({
+      reportId: 'r1',
+      targetType: ReportTargetType.TRACK,
+      targetId: 't1',
+      reason: ReportReason.SPAM,
+      reporterId: 'u-reporter',
+    });
+
+    expect(prisma.user.findMany).toHaveBeenCalledWith({
+      where: { role: 'ADMIN', status: { not: 'BANNED' } },
+      select: { id: true },
+    });
+    expect(prisma.notification.createMany).toHaveBeenCalledWith({
+      data: expect.arrayContaining([
+        expect.objectContaining({
+          userId: 'admin1',
+          type: NotificationType.REPORT_CREATED,
+          title: 'Nouveau signalement',
+        }),
+        expect.objectContaining({
+          userId: 'admin2',
+          type: NotificationType.REPORT_CREATED,
+        }),
+      ]),
+    });
+    const createArg = prisma.notification.createMany.mock.calls[0][0] as {
+      data: { userId: string }[];
+    };
+    expect(createArg.data.map((d) => d.userId)).not.toContain('u-reporter');
+  });
+
   it('notifyReportStatusUpdate ignore OPEN', async () => {
     await service.notifyReportStatusUpdate({
       reporterId: 'u1',

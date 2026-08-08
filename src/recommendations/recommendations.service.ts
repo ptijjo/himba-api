@@ -106,7 +106,8 @@ export class RecommendationsService {
       id: track.id,
       title: track.title,
       genre: track.genre,
-      price: track.price,
+      // Aligné sur TracksService.toPublicTrack — jamais un Decimal Prisma brut
+      price: track.price == null ? null : Number(track.price),
       artistId: track.artistId,
       durationMs: track.durationMs,
       coverUrl: track.coverUrl ?? track.album?.coverUrl ?? null,

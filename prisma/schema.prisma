@@ -34,6 +34,8 @@ enum NotificationType {
   NEW_FOLLOWER
   REPORT_UPDATE
   REPORT_SANCTION
+  /** Nouveau signalement — destinataires : comptes ADMIN. */
+  REPORT_CREATED
 }
 
 /** Cible d’un signalement utilisateur. */

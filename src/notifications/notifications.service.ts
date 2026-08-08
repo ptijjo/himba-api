@@ -14,6 +14,22 @@ import {
   REPORT_SANCTION_TARGET_BODY,
 } from '../reports/report-sanction';
 
+const REPORT_TARGET_LABEL: Record<ReportTargetType, string> = {
+  TRACK: 'Titre',
+  ALBUM: 'Album',
+  ARTIST: 'Artiste',
+  USER: 'Utilisateur',
+};
+
+const REPORT_REASON_LABEL: Record<ReportReason, string> = {
+  INAPPROPRIATE_CONTENT: 'Contenu inapproprié',
+  FRAUD_SCAM: 'Fraude / arnaque',
+  IMPERSONATION: 'Usurpation d’identité',
+  SPAM: 'Spam',
+  COPYRIGHT: 'Droits d’auteur',
+  OTHER: 'Autre',
+};
+
 /** Payload JSON stocké / envoyé en push — champs selon le type. */
 export type NotifyData = {
   artistId?: string;
@@ -27,7 +43,7 @@ export type NotifyData = {
   targetId?: string;
   reason?: ReportReason;
   sanction?: ReportSanction;
-  audience?: 'reporter' | 'target';
+  audience?: 'reporter' | 'target' | 'admin';
 };
 
 export type NotifyPayload = {
@@ -200,6 +216,51 @@ export class NotificationsService {
       [input.artistUserId],
       payload,
       `follow → ${input.artistId}`,
+    );
+  }
+
+  /**
+   * Alerte tous les comptes ADMIN qu’un nouveau signalement est à traiter (himba-admin).
+   * In-app Actus + push si token Expo enregistré.
+   */
+  async notifyAdminsOfNewReport(input: {
+    reportId: string;
+    targetType: ReportTargetType;
+    targetId: string;
+    reason: ReportReason;
+    reporterId: string;
+  }): Promise<void> {
+    const admins = await this.prisma.user.findMany({
+      where: { role: 'ADMIN', status: { not: 'BANNED' } },
+      select: { id: true },
+    });
+    const adminIds = admins
+      .map((a) => a.id)
+      .filter((id) => id !== input.reporterId);
+    if (adminIds.length === 0) {
+      return;
+    }
+
+    const targetLabel = REPORT_TARGET_LABEL[input.targetType];
+    const reasonLabel = REPORT_REASON_LABEL[input.reason];
+    const payload: NotifyPayload = {
+      type: NotificationType.REPORT_CREATED,
+      title: 'Nouveau signalement',
+      body: `${targetLabel} signalé (${reasonLabel}). À traiter dans la modération Himba.`,
+      data: {
+        reportId: input.reportId,
+        reportStatus: ReportStatus.OPEN,
+        targetType: input.targetType,
+        targetId: input.targetId,
+        reason: input.reason,
+        audience: 'admin',
+      },
+    };
+
+    await this.createAndPush(
+      adminIds,
+      payload,
+      `report ${input.reportId} → admins`,
     );
   }
 
