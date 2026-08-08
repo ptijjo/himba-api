@@ -1,15 +1,30 @@
-import { Transform } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import {
   IsBoolean,
+  IsInt,
   IsOptional,
   IsString,
+  Max,
   MaxLength,
+  Min,
   MinLength,
 } from 'class-validator';
-import { CursorPaginationQueryDto } from '../../common/pagination/cursor.dto';
 
 /** Query GET /moderation/login-attempts — ADMIN. */
-export class AdminLoginAttemptsQueryDto extends CursorPaginationQueryDto {
+export class AdminLoginAttemptsQueryDto {
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  page?: number = 1;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(50)
+  limit?: number = 15;
+
   @IsOptional()
   @Transform(({ value }: { value: unknown }) => {
     if (value === true || value === 'true' || value === '1') return true;
@@ -24,6 +39,22 @@ export class AdminLoginAttemptsQueryDto extends CursorPaginationQueryDto {
   @MinLength(1)
   @MaxLength(255)
   login?: string;
+}
+
+/** Query GET /moderation/login-locks — ADMIN. */
+export class AdminLoginLocksQueryDto {
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  page?: number = 1;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(50)
+  limit?: number = 15;
 }
 
 /** Body POST /moderation/login-unlock — ADMIN. */

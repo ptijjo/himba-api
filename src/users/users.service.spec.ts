@@ -207,13 +207,16 @@ describe('UsersService', () => {
     prisma.user.findMany.mockResolvedValue([
       { ...user, artist: { id: 'a1' } },
     ]);
+    prisma.user.count.mockResolvedValue(1);
 
-    const result = await service.listForAdmin({ limit: 20 });
+    const result = await service.listForAdmin({ limit: 15, page: 1 });
 
     expect(result.items).toHaveLength(1);
     expect(result.items[0]).not.toHaveProperty('passwordHash');
     expect(result.items[0].artistId).toBe('a1');
-    expect(result.nextCursor).toBeNull();
+    expect(result.total).toBe(1);
+    expect(result.totalPages).toBe(1);
+    expect(result.page).toBe(1);
   });
 
   it('updateForAdmin refuse les comptes ADMIN', async () => {

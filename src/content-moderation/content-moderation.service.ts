@@ -13,6 +13,12 @@ import {
   UserStatus,
 } from '../generated/prisma/client';
 import { parseLimit } from '../common/pagination/cursor.dto';
+import {
+  parsePage,
+  parsePageLimit,
+  pageSkip,
+  toPageResult,
+} from '../common/pagination/page.dto';
 import { NotificationsService } from '../notifications/notifications.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { ReportSanction } from '../reports/report-sanction';
@@ -461,23 +467,149 @@ export class ContentModerationService {
     return review;
   }
 
-  async listReviews(cursor?: string, limit?: number) {
-    const take = parseLimit(limit);
-    const items = await this.prisma.contentReview.findMany({
-      where: {},
-      take: take + 1,
-      ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
-      orderBy: { createdAt: 'desc' },
-      include: {
-        reviewer: { select: { id: true, username: true } },
-      },
-    });
-    const hasMore = items.length > take;
-    const page = hasMore ? items.slice(0, take) : items;
-    return {
-      items: page,
-      nextCursor: hasMore ? page[page.length - 1]?.id ?? null : null,
+  async listReviews(page?: number, limit?: number) {
+    const pageNum = parsePage(page);
+    const take = parsePageLimit(limit);
+    const skip = pageSkip(pageNum, take);
+
+    const [items, total] = await Promise.all([
+      this.prisma.contentReview.findMany({
+        where: {},
+        skip,
+        take,
+        orderBy: { createdAt: 'desc' },
+        include: {
+          reviewer: { select: { id: true, username: true } },
+        },
+      }),
+      this.prisma.contentReview.count(),
+    ]);
+
+    return toPageResult(items, total, pageNum, take);
+  }
+
+  /**
+   * Catalogue titres paginé pour contrôles (remplace le seul tirage aléatoire).
+   */
+  async listTracksCatalog(query: {
+    page?: number;
+    limit?: number;
+    pricing?: 'all' | 'paid' | 'free';
+  }) {
+    const page = parsePage(query.page);
+    const limit = parsePageLimit(query.limit);
+    const skip = pageSkip(page, limit);
+    const pricing = query.pricing ?? 'all';
+
+    const priceFilter =
+      pricing === 'paid'
+        ? { not: null }
+        : pricing === 'free'
+          ? null
+          : undefined;
+
+    const where = {
+      ...(priceFilter !== undefined ? { price: priceFilter } : {}),
     };
+
+    const [rows, total] = await Promise.all([
+      this.prisma.track.findMany({
+        where,
+        skip,
+        take: limit,
+        orderBy: { createdAt: 'desc' },
+        include: {
+          artist: {
+            select: { id: true, displayName: true, userId: true },
+          },
+          album: { select: { id: true, title: true, coverUrl: true } },
+        },
+      }),
+      this.prisma.track.count({ where }),
+    ]);
+
+    return toPageResult(
+      rows.map((t) => this.serializeTrack(t)),
+      total,
+      page,
+      limit,
+    );
+  }
+
+  /** Catalogue covers paginé (titres avec cover propre + albums). */
+  async listCoversCatalog(query: {
+    page?: number;
+    limit?: number;
+    kind?: 'all' | 'track' | 'album';
+  }) {
+    const page = parsePage(query.page);
+    const limit = parsePageLimit(query.limit);
+    const kind = query.kind ?? 'all';
+
+    type CoverItem = {
+      targetType: 'TRACK_COVER' | 'ALBUM_COVER';
+      targetId: string;
+      title: string;
+      coverUrl: string;
+      createdAt: string;
+      artist: { id: string; displayName: string; userId: string };
+    };
+
+    const items: CoverItem[] = [];
+
+    if (kind === 'all' || kind === 'track') {
+      const tracks = await this.prisma.track.findMany({
+        where: { coverUrl: { not: null } },
+        orderBy: { createdAt: 'desc' },
+        include: {
+          artist: {
+            select: { id: true, displayName: true, userId: true },
+          },
+        },
+      });
+      for (const t of tracks) {
+        if (!t.coverUrl) continue;
+        items.push({
+          targetType: 'TRACK_COVER',
+          targetId: t.id,
+          title: t.title,
+          coverUrl: t.coverUrl,
+          createdAt: t.createdAt.toISOString(),
+          artist: t.artist,
+        });
+      }
+    }
+
+    if (kind === 'all' || kind === 'album') {
+      const albums = await this.prisma.album.findMany({
+        orderBy: { createdAt: 'desc' },
+        include: {
+          artist: {
+            select: { id: true, displayName: true, userId: true },
+          },
+        },
+      });
+      for (const a of albums) {
+        items.push({
+          targetType: 'ALBUM_COVER',
+          targetId: a.id,
+          title: a.title,
+          coverUrl: a.coverUrl,
+          createdAt: a.createdAt.toISOString(),
+          artist: a.artist,
+        });
+      }
+    }
+
+    items.sort(
+      (a, b) =>
+        new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+    );
+
+    const total = items.length;
+    const skip = pageSkip(page, limit);
+    const pageItems = items.slice(skip, skip + limit);
+    return toPageResult(pageItems, total, page, limit);
   }
 
   private assertOutcomeAllowed(

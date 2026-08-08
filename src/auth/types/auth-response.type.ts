@@ -62,7 +62,10 @@ export type AdminLoginAttemptItem = AuthLoginAttemptItem & {
 
 export type AdminLoginAttemptsResponse = {
   items: AdminLoginAttemptItem[];
-  nextCursor: string | null;
+  page: number;
+  limit: number;
+  total: number;
+  totalPages: number;
 };
 
 export type AdminLoginLockItem = {
@@ -72,5 +75,11 @@ export type AdminLoginLockItem = {
 };
 
 export type AdminLoginLocksResponse = {
+  items: AdminLoginLockItem[];
+  /** Alias legacy (moniteur HTML). */
   locks: AdminLoginLockItem[];
+  page: number;
+  limit: number;
+  total: number;
+  totalPages: number;
 };

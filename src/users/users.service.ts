@@ -11,7 +11,12 @@ import {
   UserRole,
   UserStatus,
 } from '../generated/prisma/client';
-import { parseLimit } from '../common/pagination/cursor.dto';
+import {
+  parsePage,
+  parsePageLimit,
+  pageSkip,
+  toPageResult,
+} from '../common/pagination/page.dto';
 import { PrismaService } from '../prisma/prisma.service';
 import { StorageService } from '../storage/storage.service';
 import { UpdateProfileDto } from './dto/update-profile.dto';
@@ -24,7 +29,10 @@ export type AdminUserListItem = PublicUser & {
 
 export type AdminUsersListResponse = {
   items: AdminUserListItem[];
-  nextCursor: string | null;
+  page: number;
+  limit: number;
+  total: number;
+  totalPages: number;
 };
 
 /** Profil visible par un autre compte — jamais email / hash / status. */
@@ -189,13 +197,15 @@ export class UsersService {
    * Liste ADMIN — sans passwordHash ; filtres q / role / status.
    */
   async listForAdmin(query: {
-    cursor?: string;
+    page?: number;
     limit?: number;
     q?: string;
     role?: UserRole;
     status?: UserStatus;
   }): Promise<AdminUsersListResponse> {
-    const take = parseLimit(query.limit);
+    const page = parsePage(query.page);
+    const limit = parsePageLimit(query.limit);
+    const skip = pageSkip(page, limit);
     const q = query.q?.trim();
 
     const where: Prisma.UserWhereInput = {
@@ -211,31 +221,31 @@ export class UsersService {
         : {}),
     };
 
-    const rows = await this.prisma.user.findMany({
-      where,
-      orderBy: { createdAt: 'desc' },
-      take: take + 1,
-      ...(query.cursor
-        ? { cursor: { id: query.cursor }, skip: 1 }
-        : {}),
-      include: {
-        artist: { select: { id: true } },
-      },
-    });
+    const [rows, total] = await Promise.all([
+      this.prisma.user.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take: limit,
+        include: {
+          artist: { select: { id: true } },
+        },
+      }),
+      this.prisma.user.count({ where }),
+    ]);
 
-    const hasMore = rows.length > take;
-    const page = hasMore ? rows.slice(0, take) : rows;
-
-    return {
-      items: page.map((row) => {
+    return toPageResult(
+      rows.map((row) => {
         const { artist, ...user } = row;
         return {
           ...this.toPublic(user),
           artistId: artist?.id ?? null,
         };
       }),
-      nextCursor: hasMore ? (page[page.length - 1]?.id ?? null) : null,
-    };
+      total,
+      page,
+      limit,
+    );
   }
 
   /**

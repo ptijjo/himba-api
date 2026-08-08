@@ -13,6 +13,13 @@ import {
   money,
   toStripeCents,
 } from '../common/money/money';
+import {
+  parsePage,
+  parsePageLimit,
+  pageSkip,
+  toPageResult,
+  type PageResult,
+} from '../common/pagination/page.dto';
 import { Prisma } from '../generated/prisma/client';
 import { ArtistsService } from '../artists/artists.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -470,6 +477,79 @@ export class PaymentsService {
       },
     };
   }
+
+  /** Liste chronologique des ventes (titres + albums) — ADMIN. */
+  async listSalesForAdmin(query: {
+    page?: number;
+    limit?: number;
+  }): Promise<PageResult<AdminSaleListItem>> {
+    const page = parsePage(query.page);
+    const limit = parsePageLimit(query.limit);
+    const skip = pageSkip(page, limit);
+    const fetchTake = skip + limit;
+
+    const [tracks, albums, trackTotal, albumTotal] = await Promise.all([
+      this.prisma.purchase.findMany({
+        orderBy: { createdAt: 'desc' },
+        take: fetchTake,
+        include: {
+          user: { select: { id: true, username: true, email: true } },
+          track: {
+            select: {
+              id: true,
+              title: true,
+              artist: { select: { displayName: true } },
+            },
+          },
+        },
+      }),
+      this.prisma.albumPurchase.findMany({
+        orderBy: { createdAt: 'desc' },
+        take: fetchTake,
+        include: {
+          user: { select: { id: true, username: true, email: true } },
+          album: {
+            select: {
+              id: true,
+              title: true,
+              artist: { select: { displayName: true } },
+            },
+          },
+        },
+      }),
+      this.prisma.purchase.count(),
+      this.prisma.albumPurchase.count(),
+    ]);
+
+    const merged: AdminSaleListItem[] = [
+      ...tracks.map((p) => ({
+        id: p.id,
+        kind: 'TRACK' as const,
+        amount: Number(p.amount),
+        createdAt: p.createdAt.toISOString(),
+        buyer: p.user,
+        productId: p.track.id,
+        productTitle: p.track.title,
+        artistName: p.track.artist.displayName,
+      })),
+      ...albums.map((p) => ({
+        id: p.id,
+        kind: 'ALBUM' as const,
+        amount: Number(p.amount),
+        createdAt: p.createdAt.toISOString(),
+        buyer: p.user,
+        productId: p.album.id,
+        productTitle: p.album.title,
+        artistName: p.album.artist.displayName,
+      })),
+    ].sort(
+      (a, b) =>
+        new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+    );
+
+    const items = merged.slice(skip, skip + limit);
+    return toPageResult(items, trackTotal + albumTotal, page, limit);
+  }
 }
 
 export type AdminSalesBucket = {
@@ -496,6 +576,17 @@ export type AdminSalesStatsResponse = {
     weekly: AdminSalesPoint[];
     monthly: AdminSalesPoint[];
   };
+};
+
+export type AdminSaleListItem = {
+  id: string;
+  kind: 'TRACK' | 'ALBUM';
+  amount: number;
+  createdAt: string;
+  buyer: { id: string; username: string; email: string };
+  productId: string;
+  productTitle: string;
+  artistName: string;
 };
 
 type SaleEvent = {

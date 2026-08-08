@@ -861,11 +861,13 @@ describe('AuthService', () => {
           createdAt: new Date(nowIso),
         },
       ]);
+      prisma.loginAttempt.count.mockResolvedValue(1);
 
       const result = await service.listLoginAttemptsForAdmin({
         success: false,
         login: 'Alice',
-        limit: 20,
+        limit: 15,
+        page: 1,
       });
 
       expect(prisma.loginAttempt.findMany).toHaveBeenCalledWith({
@@ -874,10 +876,12 @@ describe('AuthService', () => {
           loginNormalized: { contains: 'alice', mode: 'insensitive' },
         },
         orderBy: { createdAt: 'desc' },
-        take: 21,
+        skip: 0,
+        take: 15,
       });
       expect(result.items[0].loginNormalized).toBe('alice');
-      expect(result.nextCursor).toBeNull();
+      expect(result.total).toBe(1);
+      expect(result.totalPages).toBe(1);
     });
 
     it('liste les locks Redis avec TTL et fail count', async () => {
@@ -890,7 +894,7 @@ describe('AuthService', () => {
         .mockResolvedValueOnce('5')
         .mockResolvedValueOnce('3');
 
-      const result = await service.listLoginLocks();
+      const result = await service.listLoginLocks({ page: 1, limit: 15 });
 
       expect(redis.scanKeys).toHaveBeenCalledWith('login:lock:*');
       expect(result.locks).toEqual([
@@ -905,6 +909,8 @@ describe('AuthService', () => {
           failCount: 3,
         },
       ]);
+      expect(result.total).toBe(2);
+      expect(result.totalPages).toBe(1);
     });
 
     it('débloque un login (supprime fail + lock)', async () => {

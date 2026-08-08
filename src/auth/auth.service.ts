@@ -12,6 +12,12 @@ import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
 import { createHash, randomBytes, randomUUID } from 'crypto';
 import { parseLimit } from '../common/pagination/cursor.dto';
+import {
+  parsePage,
+  parsePageLimit,
+  pageSkip,
+  toPageResult,
+} from '../common/pagination/page.dto';
 import { resolveBcryptRounds } from '../common/crypto/bcrypt-rounds';
 import { User, UserRole, UserStatus, ArtistKycStatus } from '../generated/prisma/client';
 import { MailService } from '../mail/mail.service';
@@ -279,38 +285,40 @@ export class AuthService {
    * Moniteur ADMIN — toutes les tentatives (filtres success / login).
    */
   async listLoginAttemptsForAdmin(query: {
-    cursor?: string;
+    page?: number;
     limit?: number;
     success?: boolean;
     login?: string;
   }): Promise<AdminLoginAttemptsResponse> {
-    const limit = parseLimit(query.limit);
+    const page = parsePage(query.page);
+    const limit = parsePageLimit(query.limit);
+    const skip = pageSkip(page, limit);
     const loginFilter = query.login?.trim().toLowerCase();
 
-    const rows = await this.prisma.loginAttempt.findMany({
-      where: {
-        ...(query.success !== undefined ? { success: query.success } : {}),
-        ...(loginFilter
-          ? {
-              loginNormalized: {
-                contains: loginFilter,
-                mode: 'insensitive' as const,
-              },
-            }
-          : {}),
-      },
-      orderBy: { createdAt: 'desc' },
-      take: limit + 1,
-      ...(query.cursor
-        ? { cursor: { id: query.cursor }, skip: 1 }
+    const where = {
+      ...(query.success !== undefined ? { success: query.success } : {}),
+      ...(loginFilter
+        ? {
+            loginNormalized: {
+              contains: loginFilter,
+              mode: 'insensitive' as const,
+            },
+          }
         : {}),
-    });
+    };
 
-    const hasMore = rows.length > limit;
-    const page = hasMore ? rows.slice(0, limit) : rows;
+    const [rows, total] = await Promise.all([
+      this.prisma.loginAttempt.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take: limit,
+      }),
+      this.prisma.loginAttempt.count({ where }),
+    ]);
 
-    return {
-      items: page.map((row) => ({
+    return toPageResult(
+      rows.map((row) => ({
         id: row.id,
         userId: row.userId,
         loginNormalized: row.loginNormalized,
@@ -320,12 +328,17 @@ export class AuthService {
         userAgent: row.userAgent,
         createdAt: row.createdAt,
       })),
-      nextCursor: hasMore ? page[page.length - 1].id : null,
-    };
+      total,
+      page,
+      limit,
+    );
   }
 
   /** Moniteur ADMIN — comptes temporairement verrouillés (Redis). */
-  async listLoginLocks(): Promise<AdminLoginLocksResponse> {
+  async listLoginLocks(query?: {
+    page?: number;
+    limit?: number;
+  }): Promise<AdminLoginLocksResponse> {
     const keys = await this.redis.scanKeys('login:lock:*');
     const locks: AdminLoginLockItem[] = [];
 
@@ -348,7 +361,13 @@ export class AuthService {
     }
 
     locks.sort((a, b) => a.loginNormalized.localeCompare(b.loginNormalized));
-    return { locks };
+
+    const page = parsePage(query?.page);
+    const limit = parsePageLimit(query?.limit);
+    const skip = pageSkip(page, limit);
+    const total = locks.length;
+    const items = locks.slice(skip, skip + limit);
+    return { ...toPageResult(items, total, page, limit), locks: items };
   }
 
   /** Moniteur ADMIN — lève le ban temporaire (fail + lock Redis). */

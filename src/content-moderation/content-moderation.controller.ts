@@ -4,10 +4,12 @@ import { UserRole } from '../generated/prisma/client';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import type { AuthenticatedUser } from '../auth/types/authenticated-user.type';
 import { Roles } from '../auth/decorators/roles.decorator';
-import { CursorPaginationQueryDto } from '../common/pagination/cursor.dto';
+import { PagePaginationQueryDto } from '../common/pagination/page.dto';
 import { ContentModerationService } from './content-moderation.service';
 import {
+  ContentCatalogQueryDto,
   ContentSampleQueryDto,
+  CoverCatalogQueryDto,
   CoverSampleQueryDto,
 } from './dto/content-sample-query.dto';
 import { CreateContentReviewDto } from './dto/create-content-review.dto';
@@ -33,10 +35,22 @@ export class ContentModerationController {
     return this.contentModeration.sampleCovers(query);
   }
 
+  @Get('moderation/content/tracks')
+  @Roles(UserRole.ADMIN)
+  listTracks(@Query() query: ContentCatalogQueryDto) {
+    return this.contentModeration.listTracksCatalog(query);
+  }
+
+  @Get('moderation/content/covers')
+  @Roles(UserRole.ADMIN)
+  listCovers(@Query() query: CoverCatalogQueryDto) {
+    return this.contentModeration.listCoversCatalog(query);
+  }
+
   @Get('moderation/content/reviews')
   @Roles(UserRole.ADMIN)
-  listReviews(@Query() query: CursorPaginationQueryDto) {
-    return this.contentModeration.listReviews(query.cursor, query.limit);
+  listReviews(@Query() query: PagePaginationQueryDto) {
+    return this.contentModeration.listReviews(query.page, query.limit);
   }
 
   @Post('moderation/content/reviews')

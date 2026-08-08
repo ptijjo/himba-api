@@ -37,19 +37,35 @@ describe('AuthModerationController', () => {
   it('délègue listLoginAttempts', async () => {
     authService.listLoginAttemptsForAdmin.mockResolvedValue({
       items: [],
-      nextCursor: null,
+      page: 1,
+      limit: 15,
+      total: 0,
+      totalPages: 1,
     });
-    const query = { limit: 20, success: false as boolean };
+    const query = { limit: 15, page: 1, success: false as boolean };
     await expect(controller.listLoginAttempts(query)).resolves.toEqual({
       items: [],
-      nextCursor: null,
+      page: 1,
+      limit: 15,
+      total: 0,
+      totalPages: 1,
     });
     expect(authService.listLoginAttemptsForAdmin).toHaveBeenCalledWith(query);
   });
 
   it('délègue listLoginLocks', async () => {
-    authService.listLoginLocks.mockResolvedValue({ locks: [] });
-    await expect(controller.listLoginLocks()).resolves.toEqual({ locks: [] });
+    authService.listLoginLocks.mockResolvedValue({
+      items: [],
+      locks: [],
+      page: 1,
+      limit: 15,
+      total: 0,
+      totalPages: 1,
+    });
+    await expect(controller.listLoginLocks({})).resolves.toMatchObject({
+      items: [],
+      locks: [],
+    });
   });
 
   it('délègue unlockLogin', async () => {

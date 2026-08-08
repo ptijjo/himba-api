@@ -14,15 +14,17 @@ import { UserRole, UserStatus } from '../../generated/prisma/client';
 /** Query GET /moderation/users — ADMIN. */
 export class AdminUsersQueryDto {
   @IsOptional()
-  @IsString()
-  cursor?: string;
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  page?: number = 1;
 
   @IsOptional()
   @Type(() => Number)
   @IsInt()
   @Min(1)
   @Max(50)
-  limit?: number = 20;
+  limit?: number = 15;
 
   /** Recherche email ou username (contains, insensible à la casse). */
   @IsOptional()

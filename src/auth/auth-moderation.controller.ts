@@ -16,6 +16,7 @@ import { Public } from './decorators/public.decorator';
 import { Roles } from './decorators/roles.decorator';
 import {
   AdminLoginAttemptsQueryDto,
+  AdminLoginLocksQueryDto,
   UnlockLoginDto,
 } from './dto/admin-login-monitor.dto';
 
@@ -54,8 +55,8 @@ export class AuthModerationController {
 
   @Get('moderation/login-locks')
   @Roles(UserRole.ADMIN)
-  listLoginLocks() {
-    return this.authService.listLoginLocks();
+  listLoginLocks(@Query() query: AdminLoginLocksQueryDto) {
+    return this.authService.listLoginLocks(query);
   }
 
   @Post('moderation/login-unlock')

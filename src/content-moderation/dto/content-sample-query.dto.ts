@@ -41,3 +41,43 @@ export class CoverSampleQueryDto {
   @IsIn(['all', 'track', 'album'])
   kind?: 'all' | 'track' | 'album' = 'all';
 }
+
+/** Catalogue paginé titres (contrôles). */
+export class ContentCatalogQueryDto {
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  page?: number = 1;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(50)
+  limit?: number = 15;
+
+  @IsOptional()
+  @IsIn(['all', 'paid', 'free'])
+  pricing?: 'all' | 'paid' | 'free' = 'all';
+}
+
+/** Catalogue paginé covers. */
+export class CoverCatalogQueryDto {
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  page?: number = 1;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  @Max(50)
+  limit?: number = 15;
+
+  @IsOptional()
+  @IsIn(['all', 'track', 'album'])
+  kind?: 'all' | 'track' | 'album' = 'all';
+}
